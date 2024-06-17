@@ -1,5 +1,5 @@
 """
-    create_freq_file(start_freq_Hz, end_freq_Hz, num_freq, repertory)
+    CreateFreqFile(start_freq_Hz::Float64, end_freq_Hz::Float64, num_freq::Int, repertory::String="")
 
 Create a text file containing a frequency vector within the specified range.
 
@@ -9,21 +9,31 @@ Create a text file containing a frequency vector within the specified range.
 - `num_freq`: Number of frequencies in the vector.
 - `repertory`: Directory path where the file will be created. If empty, the file will be created in the current working directory.
 """
+function CreateFreqFile(start_freq_Hz::Float64, end_freq_Hz::Float64, num_freq::Int, repertory::String="")
+    # Input validation
+    if start_freq_Hz < 0 || end_freq_Hz < 0
+        throw(ArgumentError("Frequencies must be non-negative."))
+    end
 
-function CreateFreqFile(start_freq_Hz, end_freq_Hz, num_freq, repertory)
+    if num_freq <= 0
+        throw(ArgumentError("Number of frequencies must be a positive integer."))
+    end
+
+    # Set the directory path
+    directory_path = isempty(repertory) ? "." : repertory
+
+    # Generate the frequency vector
+    freq_vector = range(start_freq_Hz, stop=end_freq_Hz, length=num_freq)
     
-    repertory = isempty(repertory) ? "" : repertory * "/"
+    # Define the full file path
+    file_path = joinpath(directory_path, "FreqHz.txt")
 
-    freq_vector = range(start_freq_Hz, end_freq_Hz, num_freq)
-    
-    path = joinpath(repertory, "FreqHz.txt")
-
-    open(path, "w") do file
+    # Open the file and write the frequency vector
+    open(file_path, "w") do file
         for freq in freq_vector
             println(file, freq)
         end
     end
 
-    println("Your file $path has been created.")
-    
+    println("Your file $file_path has been created.")
 end
