@@ -31,7 +31,7 @@ LOS = "z"
 (B1, B2, BLOS, V1, V2, VLOS, T, n, nH2, nHp) = ReadSimulation(simu_dir, LOS)
 """
 
-function ReadSimulation(simu, LOS::String)
+function ReadSimulation(simu, LOS, conversionn, conversionT, conversionV, conversionB)
     fileBx = "$simu/Bx.fits"
     fileBy = "$simu/By.fits"
     fileBz = "$simu/Bz.fits"
@@ -44,34 +44,34 @@ function ReadSimulation(simu, LOS::String)
     filenHp = "$simu/densityHp.fits"
     
     # Reading files that are always present
-    T = read(FITS(fileT)[1]) # K
-    n = read(FITS(filen)[1]) # cm^-3
+    T = read(FITS(fileT)[1]) .* conversionT # K
+    n = read(FITS(filen)[1]) .* conversionn # cm^-3
     
     # Reading files based on LOS and their presence
     if LOS == "z"
-        B1 = read(FITS(fileBx)[1]) .* MILI_TO_MICRO # microG
-        B2 = read(FITS(fileBy)[1]) .* MILI_TO_MICRO # microG
-        BLOS = read(FITS(fileBz)[1]) .* MILI_TO_MICRO # microG
-        V1 = read(FITS(fileVx)[1]) # km/s
-        V2 = read(FITS(fileVy)[1]) # km/s
-        VLOS = read(FITS(fileVz)[1]) # km/s
+        B1 = read(FITS(fileBx)[1]) .* conversionB # microG
+        B2 = read(FITS(fileBy)[1]) .* conversionB # microG
+        BLOS = read(FITS(fileBz)[1]) .* conversionB # microG
+        V1 = read(FITS(fileVx)[1]) .* conversionV # km/s
+        V2 = read(FITS(fileVy)[1]) .* conversionV # km/s
+        VLOS = read(FITS(fileVz)[1]) .* conversionV # km/s
         if isfile(filenH2) && isfile(filenHp)
-            nH2 = read(FITS(filenH2)[1]) # cm^-3
-            nHp = read(FITS(filenHp)[1]) # cm^-3
+            nH2 = read(FITS(filenH2)[1]) .* conversionn # cm^-3
+            nHp = read(FITS(filenHp)[1]) .* conversionn # cm^-3
         else
             nH2 = nothing
             nHp = nothing
         end
     elseif LOS == "y"
-        B1 = read(FITS(fileBx)[1]) .* MILI_TO_MICRO # microG
-        B2 = read(FITS(fileBz)[1]) .* MILI_TO_MICRO # microG
-        BLOS = read(FITS(fileBy)[1]) .* MILI_TO_MICRO # microG
-        V1 = read(FITS(fileVx)[1]) # km/s
-        V2 = read(FITS(fileVz)[1]) # km/s
-        VLOS = read(FITS(fileVy)[1]) # km/s
+        B1 = read(FITS(fileBx)[1]) .* conversionB # microG
+        B2 = read(FITS(fileBz)[1]) .* conversionB # microG
+        BLOS = read(FITS(fileBy)[1]) .* conversionB # microG
+        V1 = read(FITS(fileVx)[1]) .* conversionV # km/s
+        V2 = read(FITS(fileVz)[1]) .* conversionV # km/s
+        VLOS = read(FITS(fileVy)[1]) .* conversionV # km/s
         if isfile(filenH2) && isfile(filenHp)
-            nH2 = read(FITS(filenH2)[1]) # cm^-3
-            nHp = read(FITS(filenHp)[1]) # cm^-3
+            nH2 = read(FITS(filenH2)[1]) .* conversionn # cm^-3
+            nHp = read(FITS(filenHp)[1]) .* conversionn # cm^-3
         else
             nH2 = nothing
             nHp = nothing
@@ -86,15 +86,15 @@ function ReadSimulation(simu, LOS::String)
         T = permutedims(T, [1, 3, 2])
         n = permutedims(n, [1, 3, 2])
     else
-        B1 = read(FITS(fileBy)[1]) .* MILI_TO_MICRO # microG
-        B2 = read(FITS(fileBz)[1]) .* MILI_TO_MICRO # microG
-        BLOS = read(FITS(fileBx)[1]) .* MILI_TO_MICRO # microG
-        V1 = read(FITS(fileVy)[1]) # km/s
-        V2 = read(FITS(fileVz)[1]) # km/s
-        VLOS = read(FITS(fileVx)[1]) # km/s
+        B1 = read(FITS(fileBy)[1]) .* conversionB # microG
+        B2 = read(FITS(fileBz)[1]) .* conversionB # microG
+        BLOS = read(FITS(fileBx)[1]) .* conversionB # microG
+        V1 = read(FITS(fileVy)[1]) .* conversionV # km/s
+        V2 = read(FITS(fileVz)[1]) .* conversionV # km/s
+        VLOS = read(FITS(fileVx)[1]) .* conversionV # km/s
         if isfile(filenH2) && isfile(filenHp)
-            nH2 = read(FITS(filenH2)[1]) # cm^-3
-            nHp = read(FITS(filenHp)[1]) # cm^-3
+            nH2 = read(FITS(filenH2)[1]) .* conversionn # cm^-3
+            nHp = read(FITS(filenHp)[1]) .* conversionn # cm^-3
         else
             nH2 = nothing
             nHp = nothing

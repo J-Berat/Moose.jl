@@ -136,7 +136,7 @@ function ask_user(prompt::String, default::Float64)
     val = readline()
     isempty(val) ? default : parse(Float64, val)
 end
-function ask_user(prompt::String, default::Int)
+function ask_user(prompt::String, default::Int64)
     println(prompt, "(default: ",default, "): ")
     val = readline()
     isempty(val) ? default : parse(Int, val)
@@ -144,7 +144,7 @@ end
 function ask_user(prompt::String, default::String)
     println(prompt, "(default: ",default, "): ")
     response = readline()
-    isempty(response) ? default : parse(String, response) 
+    isempty(response) ? default : response
 end
 
 """
@@ -241,6 +241,71 @@ function display_simulations(simu_list)
 end
 
 """
+    extract_category(dir::String) -> String
+
+Extract the category from a directory name based on a specific pattern.
+
+# Arguments
+- `dir::String`: The directory name from which to extract the category.
+
+# Returns
+- `String`: The extracted category if the pattern matches, otherwise "unknown".
+
+# Description
+This function attempts to extract a category from the directory name using a regex pattern. If a match is found, it returns the captured category. If no match is found, it prints a message indicating that the simulation name was not found and returns "unknown".
+
+# Example
+```julia
+# Example usage
+dir_name = "d1cf123bx456rms789"
+category = extract_category(dir_name)
+println(category)  # Output: "123bx456rms789"
+
+dir_name_invalid = "invalid_directory_name"
+category = extract_category(dir_name_invalid)
+# Output: "Nom de simulation non trouvé pour : invalid_directory_name"
+println(category)  # Output: "unknown"
+"""
+function extract_category(dir)
+    m = match(r"d1cf(\d+bx\d+rms\d+)", dir)
+    if m !== nothing
+        return m.captures[1]
+    else
+        println("Nom de simulation non trouvé pour : $dir")
+        return "unknown"
+    end
+end
+
+"""
+    clean_path(path::String) -> String
+
+Clean a file path by removing specific substrings based on predefined patterns.
+
+# Arguments
+- `path::String`: The file path to be cleaned.
+
+# Returns
+- `String`: The cleaned file path with specific substrings removed.
+
+# Description
+This function cleans a file path by removing specific substrings based on predefined patterns. It sequentially applies a series of replacements to remove unwanted parts of the path.
+
+# Example
+```julia
+# Example usage
+original_path = "/Users/jb270005/Desktop/simu_RAMSES/nograv1024/some_path/256/bx10d1otherparts"
+cleaned_path = clean_path(original_path)
+println(cleaned_path)  # Output: "some_path/otherparts"
+"""
+function clean_path(path)
+    cleaned_path = replace(path, r"/Users/jb270005/Desktop/simu_RAMSES/" => "")
+    cleaned_path = replace(cleaned_path, r"nograv1024/.+kyr/256" => "")
+    cleaned_path = replace(cleaned_path, r"bx10" => "")
+    cleaned_path = replace(cleaned_path, r"d1" => "") 
+    return cleaned_path
+end
+
+"""
     print_progress(progress::Int, total::Int)
 
 Print a progress bar to the console.
@@ -267,4 +332,12 @@ function print_progress(progress::Int, total::Int)
     filled_length = Int(round(bar_width * progress_ratio))
     bar = "█" ^ filled_length * " " ^ (bar_width - filled_length)
     print("\rProgress: |$bar| $progress/$total")
+end
+
+function create_color_palette()
+    return [
+        "blue", "green", "red", "purple", "orange", 
+        "cyan", "magenta", "brown", "pink", "gray", 
+        "lime", "navy", "teal", "violet"
+    ]
 end
