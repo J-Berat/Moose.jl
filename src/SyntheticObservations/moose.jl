@@ -21,6 +21,7 @@ The `MOOSE` function is an interactive tool that guides the user through process
 # To run the MOOSE function, simply call it:
 MOOSE()
 """
+
 function MOOSE()
     # Ask user for the base directory of simulations
     base_dir = ask_user("Enter the base directory for simulations", pwd())
@@ -60,24 +61,21 @@ function MOOSE()
         conversionT = 1
     end
     
-    unit_response_V = ask_user("Is the unit of velocity V in km/s? (Y/N)", "N")
-    if uppercase(unit_response_V) == "N"
-        conversionV = ask_user("Enter the conversion factor for velocity V to km/s:", 1.0)
-    else
-        conversionV = 1
-    end
-    
     # Ask user for Synchrotron data processing
     FaradayRotation = ""
     responseSynchrotron = ""
     kernel_size_synchrotron = 5
 
-    zeta, Geff, omegaPAH, XC = WolfireConstants()
-    nuArray, PhiArray, PixelLength_pc, PixelLength_cm, BoxLength_pc = SynchrotronInstrumentalParameters()
-    DistanceArray = range(start = 0, stop = BoxLength_pc, step = PixelLength_pc)
+    nuArray = FrequencyParameters()
+    PixelLength_pc, PixelLength_cm, BoxLength_pc, DistanceArray = DistanceParameters()
 
-    FaradayRotation = ask_user("Do you want to include Faraday rotation in the computation of Q and U?", "N")
-    responseSynchrotron = ask_user("Do you want to perform filtering for Synchrotron data?", "N")
+    FaradayRotation = ask_user("Do you want to include Faraday rotation in the computation of Q and U? (Y/N)", "N")
+    if uppercase(FaradayRotation) == "Y"
+        PhiArray = FaradayParameters()
+    else
+        PhiArray = nothing
+    end
+    responseSynchrotron = ask_user("Do you want to perform filtering for Synchrotron data? (Y/N)", "N")
     if uppercase(responseSynchrotron) == "Y"
         kernel_size_synchrotron = ask_user("What kernel size (in pix) do you want for Synchrotron filtering?", 5)
     end
@@ -91,18 +89,37 @@ function MOOSE()
     interpolation_file_path = ask_user("Enter the path to the interpolation file", joinpath(homedir(), "Synchrotron/emissivity.dat"))
     df = CSV.File(interpolation_file_path) |> DataFrame
 
-    # Loop through each chosen simulation and process the chosen lines of sight
-    total_simu = length(chosen_simu)
-    for (i, simu) in enumerate(chosen_simu)
-        println("------------------------------------------------------------------------------------------------")
-        println("Processing simulation: $simu")
-        for LOS in chosen_LOS
-            println("Processing LOS: $LOS")
-            ProcessSynchrotron(simu, LOS, FaradayRotation, responseSynchrotron, df, kernel_size_synchrotron, zeta, Geff, omegaPAH, XC, nuArray, PhiArray, PixelLength_pc, PixelLength_cm, BoxLength_pc, DistanceArray, conversionn, conversionT, conversionV, conversionB)
+    response_neW = ask_user("Do you want to use the Wolfire et al. 2003 prescription? (Y/N)", "N")
+    if uppercase(response_neW) == "Y"
+        zeta, Geff, omegaPAH, XC = WolfireConstants()
+        # Loop through each chosen simulation and process the chosen lines of sight
+        total_simu = length(chosen_simu)
+        for (i, simu) in enumerate(chosen_simu)
+            println("------------------------------------------------------------------------------------------------")
+            println("Processing simulation: $simu")
+            for LOS in chosen_LOS
+                println("Processing LOS: $LOS")
+                ProcessSynchrotron(simu, LOS, FaradayRotation, responseSynchrotron, df, kernel_size_synchrotron, zeta, Geff, omegaPAH, XC, nuArray, PhiArray, PixelLength_pc, PixelLength_cm, BoxLength_pc, DistanceArray, conversionn, conversionT, conversionB)
+            end
+            if length(chosen_simu) > 1
+                println("Finished processing all chosen LOS for simulation: $simu")
+                print_progress(i, total_simu)  # Update progress bar
+            end
         end
-        if length(chosen_simu) > 1
-            println("Finished processing all chosen LOS for simulation: $simu")
-            print_progress(i, total_simu)  # Update progress bar
+    else
+        # Loop through each chosen simulation and process the chosen lines of sight
+        total_simu = length(chosen_simu)
+        for (i, simu) in enumerate(chosen_simu)
+            println("------------------------------------------------------------------------------------------------")
+            println("Processing simulation: $simu")
+            for LOS in chosen_LOS
+                println("Processing LOS: $LOS")
+                ProcessSynchrotron(simu, LOS, FaradayRotation, responseSynchrotron, df, kernel_size_synchrotron, nuArray, PhiArray, PixelLength_pc, PixelLength_cm, BoxLength_pc, DistanceArray, conversionn, conversionT, conversionB)
+            end
+            if length(chosen_simu) > 1
+                println("Finished processing all chosen LOS for simulation: $simu")
+                print_progress(i, total_simu)  # Update progress bar
+            end
         end
     end
     println("\nFinished processing all simulations.")

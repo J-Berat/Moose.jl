@@ -46,7 +46,7 @@ function QUnu(Bperp, psi_src, RM, nuArray, df, PixelLength_cm)
     Unu = zeros(Nfreq)
 
     # QUnu computation       
-    Threads.@threads for i = 1:Nfreq
+    for i = 1:Nfreq
         nui = nuArray[i]
 
         eps_i = @. eps_interp(B, nui)  #interpolation vector at frequency nui
@@ -100,14 +100,13 @@ PixelLength_cm = 1.0
 Qnu, Unu = QUnu3D(Bperpcube, psi_src, RM, nuArray, df, PixelLength_cm)
 """
 function QUnu3D(Bperpcube, psi_src, RM, nuArray, df, PixelLength_cm)
-    
     Nfreq = length(nuArray)
     nx,ny = size(Bperpcube,1), size(Bperpcube,2)
     Qnu = zeros(nx, ny, Nfreq)
     Unu = zeros(nx, ny, Nfreq)
     
-    for i = 1:nx
-        for j = 1:ny
+    Threads.@threads for i = 1:nx
+        Threads.@threads for j = 1:ny
             Bperp_vec = Bperpcube[i,j,:]
             #computing RM
             RM_vec = RM[i,j,:]
@@ -116,7 +115,6 @@ function QUnu3D(Bperpcube, psi_src, RM, nuArray, df, PixelLength_cm)
             Qnu[i,j,:], Unu[i,j,:] = QUnu(Bperp_vec, psi_src_vec, RM_vec, nuArray, df, PixelLength_cm)
         end
     end
-
     return Qnu, Unu
 
 end
@@ -165,7 +163,7 @@ function QUnuNoFaraday(Bperp, psi_src, nuArray, df, PixelLength_cm)
     Unu = zeros(Nfreq)
 
     # QUnu computation       
-    Threads.@threads for i = 1:Nfreq
+    for i = 1:Nfreq
         nui = nuArray[i]
 
         eps_i = @. eps_interp(B, nui)  #interpolation vector at frequency nui

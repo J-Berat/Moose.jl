@@ -48,6 +48,8 @@ integrated_los = intLOS(cube, PixelLength_cm)
 """
 intLOS(cube::AbstractArray, PixelLength_cm::Float64) = dropdims(sum(cube .* PixelLength_cm, dims=3), dims=3)
 
+sigmaLOS(cube::AbstractArray) = dropdims(std(cube, dims=3), dims=3)
+
 """
     MeanSpectrum(cube::AbstractArray) -> AbstractArray
 
@@ -71,6 +73,22 @@ cube = rand(100, 100, 50)  # Example data cube with dimensions 100x100x50
 mean_spectrum = MeanSpectrum(cube)
 """
 MeanSpectrum(cube::AbstractArray) = dropdims(mean(cube, dims=(1, 2)), dims=(1, 2))
+
+function nearest_index(a, L)
+    distances = abs.(L .- a)  # Calculate the absolute distances between each element of L and a
+    index = argmin(distances)  # Find the index of the minimum distance
+    return index
+end
+
+function HOGbox(MeanSpectrumHI, MeanSpectrumFDF, VelArray, PhiArray)
+    HImean = nearest_index(moments(MeanSpectrumHI,x=VelArray)[2], VelArray)
+    FDFmean = nearest_index(moments(MeanSpectrumFDF,x=PhiArray)[2], PhiArray)
+    
+    HIboxline = nearest_index(moments(MeanSpectrumHI,x=VelArray)[3], VelArray)
+    FDFboxline = nearest_index(moments(MeanSpectrumFDF,x=PhiArray)[3], PhiArray)
+
+    return HImean, FDFmean, HIboxline, FDFboxline
+end
 
 """
     MaxIndicesMap(cube::AbstractArray, ValueArray::AbstractArray) -> AbstractArray
@@ -334,10 +352,172 @@ function print_progress(progress::Int, total::Int)
     print("\rProgress: |$bar| $progress/$total")
 end
 
+"""
+    read_FITS_file(file::String) -> AbstractArray
+
+Reads data from a FITS file.
+
+# Arguments
+- `file::String`: Path to the FITS file.
+
+# Returns
+- `AbstractArray`: Data read from the FITS file.
+"""
+function read_FITS_file(file)
+    read(FITS(file)[1]) 
+end
+
+"""
+    read_file(file::String, conversion::Number) -> AbstractArray
+
+Reads data from a FITS file and applies a conversion factor.
+
+# Arguments
+- `file::String`: Path to the FITS file.
+- `conversion::Number`: Conversion factor to apply to the data.
+
+# Returns
+- `AbstractArray`: Converted data read from the FITS file.
+"""
+function read_file(file, conversion)
+    read_FITS_file(file) .* conversion
+end
+"""
+    permute_dims(array::AbstractArray, LOS::String) -> AbstractArray
+
+Permutes the dimensions of an array based on the line of sight (LOS) direction.
+
+# Arguments
+- `array::AbstractArray`: Input array to permute.
+- `LOS::String`: Line of sight direction, either "x", "y", or "z".
+
+# Returns
+- `AbstractArray`: Permuted array based on the LOS direction.
+"""
+
+function permute_dims(array, LOS)
+    if LOS == "x"
+        permutedims(array, [2, 3, 1])
+    elseif LOS == "y"
+        permutedims(array, [3, 1, 2])
+    else
+        array
+    end
+end
+"""
+    read_optional_file(file::String, conversion::Number) -> Union{AbstractArray, Nothing}
+
+Reads data from a FITS file and applies a conversion factor if the file exists.
+
+# Arguments
+- `file::String`: Path to the FITS file.
+- `conversion::Number`: Conversion factor to apply to the data.
+
+# Returns
+- `Union{AbstractArray, Nothing}`: Converted data read from the FITS file, or `nothing` if the file does not exist.
+"""
+function read_optional_file(file, conversion, LOS)
+    return isfile(file) ? permute_dims(read_file(file, conversion), LOS) : nothing
+end
+
+
 function create_color_palette()
     return [
         "blue", "green", "red", "purple", "orange", 
         "cyan", "magenta", "brown", "pink", "gray", 
         "lime", "navy", "teal", "violet"
     ]
+end
+
+function AUC(x, y1, y2)
+    if length(x) != length(y1) || length(x) != length(y2)
+        error("Vectors x, y1, and y2 must have the same length.")
+    end
+
+    # Calculate the difference between the curves (area under the curve of the difference)
+    auc = 0.0
+    for i in 2:length(x)
+        # Trapezoidal rule: (base1 + base2) / 2 * height
+        delta_x = x[i] - x[i-1]
+        delta_y1 = y1[i] + y1[i-1]
+        delta_y2 = y2[i] + y2[i-1]
+        auc += abs(delta_x * (delta_y1 - delta_y2) / 2)
+    end
+
+    return auc
+end
+
+function vectornorm(Ax,Ay,Az)
+    norm = @. sqrt(Ax^2 + Ay^2 + Az^2)
+    return norm
+end
+
+function centraldiff(x, dims)
+    ∇x = diff(x, dims=dims)
+    
+    if dims == 1
+        a = cat(∇x[1:1, :, :], ∇x, dims=dims)
+        a .+= cat(∇x, ∇x[end:end, :, :], dims=dims)
+    elseif dims == 2
+        a = cat(∇x[:, 1:1, :], ∇x, dims=dims)
+        a .+= cat(∇x, ∇x[:, end:end, :], dims=dims)
+    else
+        a = cat(∇x[:, :, 1:1], ∇x, dims=dims)
+        a .+= cat(∇x, ∇x[:, :, end:end], dims=dims)
+    end
+    
+    return a
+end
+
+function centraldiff3D(cube)
+
+    ∇x = centraldiff(cube, 1)
+    ∇y = centraldiff(cube, 2)
+    ∇z = centraldiff(cube, 3)        
+
+    return ∇x, ∇y, ∇z
+end
+
+function dot_product3D(Ax, Ay, Az, Bx, By, Bz)
+    
+    dotproduct = Ax .* Bx .+ Ay .* By .+ Az .* Bz
+    
+    return dotproduct
+end
+
+function cross_product3D(Ax, Ay, Az, Bx, By, Bz)
+    
+    Cx = Ay .* Bz .- Az .* By
+    Cy = Az .* Bx .- Ax .* Bz
+    Cz = Ax .* By .- Ay .* Bx
+
+    return Cx, Cy, Cz
+end
+
+function calculate_angletan(Bx, By, Bz, ∇n_x, ∇n_y, ∇n_z)
+    
+    norm∇n = vectornorm(∇n_x, ∇n_y, ∇n_z)
+    normB = vectornorm(Bx,By,Bz)
+    
+    dot_product = dot_product3D(Bx, By, Bz, ∇n_x, ∇n_y, ∇n_z)
+    
+    Cx, Cy, Cz = cross_product3D(Bx, By, Bz, ∇n_x, ∇n_y, ∇n_z)   
+    normC = vectornorm(Cx,Cy,Cz)
+    
+    theta = atan.(normC,dot_product)
+    cos_theta = cos.(theta)
+    
+    return cos_theta, theta 
+end
+
+function calculate_anglecos(Ax, Ay, Az, Bx, By, Bz)
+    
+    norm = vectornorm(Ax, Ay, Az) .* vectornorm(Bx, By, Bz)
+    
+    dot_product = dot_product3D(Ax, Ay, Az, Bx, By, Bz)
+    
+    cos_theta = dot_product ./ norm
+    theta = acos.(cos_theta)
+    
+    return cos_theta, theta
 end

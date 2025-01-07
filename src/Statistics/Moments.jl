@@ -37,6 +37,21 @@ function moments(y::AbstractArray; x::AbstractArray=1:length(y))
     return m0, m1, m2    
 end
 
+function moments_map(data, array)
+    M0 = zeros(size(data, 1), size(data, 2))
+    M1 = zeros(size(data, 1), size(data, 2))
+    M2 = zeros(size(data, 1), size(data, 2))
+    for i in 1:size(data, 1)
+        for j in 1:size(data, 2)
+            m0, m1, m2 = moments(data[i,j,:], x=array)
+            M0[i,j] = m0
+            M1[i,j] = m1
+            M2[i,j] = m2
+        end
+    end
+    return M0, M1, M2
+end
+
 """
     MomentsofMomentMap(cube::AbstractArray; x::AbstractArray=1:length(cube[1,1,:])) -> Tuple{Float64, Float64, Float64}
 

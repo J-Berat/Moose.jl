@@ -18,7 +18,7 @@ j_e(E,a=-1.3,b=1.9) = J_0 * E^a / (E+E_0)^b
 
 je_ve_ratio(E) = j_e(E) / relativistic_ve(E)
 
-power_par(E,nu,BField) = PRE_P * BFIeld * (F(freq_norm(E,nu,BField)) - G(freq_norm(E,nu,BField)))
+power_par(E,nu,BField) = PRE_P * BField * (F(freq_norm(E,nu,BField)) - G(freq_norm(E,nu,BField)))
 power_perp(E,nu,BField)= PRE_P * BField * (F(freq_norm(E,nu,BField)) + G(freq_norm(E,nu,BField)))
 
 par_integrand(E,nu,BField) = je_ve_ratio(E) * power_par(E,nu,BField)
@@ -61,8 +61,8 @@ EmissInterp(BArray, nuArray)
 function EmissInterp(BArray::AbstractArray,nuArray::AbstractArray)
     open("emissivity.dat", "w") do f
       write(f, "B\tnu\te_para\te_perp\n")    
-      @Threads.threads for nui in rangenu    
-        @Threads.threads for Bi in rangeB
+      for nui in nuArray   
+        for Bi in BArray
             @inbounds eps_para = par_emissivity(nui,Bi)
             @inbounds eps_perp = perp_emissivity(nui,Bi)
             to_print = "$Bi\t$nui\t$eps_para\t$eps_perp\n"
