@@ -66,15 +66,5 @@ MOOSE()              # Start the interactive tool
 
 ---
 
-## **Examples**
-
-### **Run MOOSE**
-Launch the interactive tool to process synchrotron data:
-```julia
-include("moose.jl")  # Load the main script
-MOOSE()              # Start the interactive session
-
----
-
 ## **Contributors**
-- **Jack Berat** - Main Developer  
+- **JB** - Main Developer 
