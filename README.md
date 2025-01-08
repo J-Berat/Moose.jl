@@ -15,11 +15,10 @@ MOOSE is an interactive tool designed for processing simulated synchrotron emiss
 
 ## **Main Features**
 - Process synchrotron simulations based on mock data.
-- Compute Stokes parameters (\(I\), \(Q\), \(U\)).
+- Compute different parameters maps like RM or Maximum polarized intensity map.
+- Compute Stokes parameters I, Q, U.
 - Perform Rotation Measure Synthesis (RM Synthesis) for Faraday rotation studies.
-- Generate frequency files for simulated observations.
 - Handle instrumental parameters such as frequency resolution and simulation box sizes.
-- Support for CGS physical units.
 
 ---
 
