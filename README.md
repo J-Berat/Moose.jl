@@ -26,7 +26,7 @@ MOOSE is an interactive tool designed for processing simulated synchrotron emiss
 ## **Installation**
 1. Clone this repository:
     ```bash
-    git clone https://github.com/username/moose.git
+    git clone https://github.com/username/MOOSE.git
     cd moose
     ```
 2. Ensure Julia is installed (version 1.8+ recommended).
@@ -57,10 +57,10 @@ MOOSE is an interactive tool designed for processing simulated synchrotron emiss
 ## **Usage**
 The primary tool in MOOSE is the **`MOOSE()`** function, which guides users interactively through the processing of simulated data. To launch MOOSE, use:
 ```julia
-include("moose.jl")  # Load the main file
+include("MOOSE.jl")  # Load the main file
 MOOSE()              # Start the interactive tool
-
+```
 ---
 
 ## **Contributors**
-- **JB** - Main Developer 
+- **Jack Berat** - Main Developer
