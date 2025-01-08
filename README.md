@@ -46,9 +46,6 @@ MOOSE is an interactive tool designed for processing simulated synchrotron emiss
         "StatsBase",       # Statistics
         "Statistics",
         "KernelDensity",
-        "LaTeXStrings",    # Plotting packages
-        "GLMakie",
-        "CairoMakie",
         "StringEncodings", # String operations
         "FFTW",            # Fourier
         "ImageFiltering",  # Image processing
