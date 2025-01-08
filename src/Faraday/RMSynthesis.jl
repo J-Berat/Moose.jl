@@ -10,10 +10,13 @@ Perform Rotation Measure (RM) synthesis on Stokes Q and U parameters.
 - `PhiArray::AbstractArray`: Array of Faraday depths in rad/m².
 
 # Returns
-- `Tuple{AbstractArray, AbstractArray, AbstractArray}`: Three arrays representing the absolute value, real part, and imaginary part of the Faraday dispersion function.
+- `Tuple{AbstractArray, AbstractArray, AbstractArray}`: A tuple containing:
+  - `absF::AbstractArray`: Absolute value of the Faraday dispersion function.
+  - `realF::AbstractArray`: Real part of the Faraday dispersion function.
+  - `imagF::AbstractArray`: Imaginary part of the Faraday dispersion function.
 
 # Description
-This function performs RM synthesis, a technique used in radio astronomy to study the Faraday rotation effect. The input Stokes Q and U parameters are combined to form the complex polarization P. The function then calculates the Faraday dispersion function F for each value in `PhiArray`.
+The `RMSynthesis` function is a technique used in radio astronomy to study the Faraday rotation effect. It combines the Stokes Q and U parameters into the complex polarization P, and computes the Faraday dispersion function F for each value in `PhiArray`. The result is provided in absolute, real, and imaginary components.
 
 # Example
 ```julia
@@ -25,6 +28,11 @@ PhiArray = [-100, 0, 100]
 
 # Function call
 absF, realF, imagF = RMSynthesis(Q, U, nuArray, PhiArray)
+
+# Output
+absF = [...]
+realF = [...]
+imagF = [...]
 """
 
 function RMSynthesis(Q::AbstractArray, U::AbstractArray, nuArray::AbstractArray, PhiArray::AbstractArray)
@@ -80,12 +88,12 @@ Calculate the Rotation Measure Spread Function (RMSF) and its full width at half
 - `PhiArray::AbstractArray`: Array of Faraday depths in rad/m².
 
 # Returns
-- `Tuple{AbstractArray, Float64}`: 
-  - `AbstractArray`: An array representing the absolute value of the RMSF.
-  - `Float64`: The full width at half maximum (FWHM) of the RMSF.
+- `Tuple{AbstractArray, Float64}`: A tuple containing:
+  - `absRMSF::AbstractArray`: Absolute value of the Rotation Measure Spread Function.
+  - `fwhmRMSF::Float64`: Full width at half maximum (FWHM) of the RMSF.
 
 # Description
-This function calculates the Rotation Measure Spread Function (RMSF) for a given set of frequency values and Faraday depths. The RMSF describes the response of an RM synthesis to a single Faraday depth component. The function also computes the full width at half maximum (FWHM) of the RMSF.
+The `getRMSF` function calculates the Rotation Measure Spread Function (RMSF), which describes the response of an RM synthesis to a single Faraday depth component. It uses the input frequency values (`nuArray`) and Faraday depths (`PhiArray`) to compute the RMSF and its FWHM.
 
 # Example
 ```julia
@@ -95,6 +103,10 @@ PhiArray = [-100, 0, 100]
 
 # Function call
 absRMSF, fwhmRMSF = getRMSF(nuArray, PhiArray)
+
+# Output
+absRMSF = [...]
+fwhmRMSF = ...
 """
 function getRMSF(nuArray::AbstractArray, PhiArray::AbstractArray)
     

@@ -12,7 +12,9 @@ Calculate the perpendicular component of the magnetic field for given magnetic f
 
 # Description
 This function calculates the perpendicular component of the magnetic field using the formula:
+
 B_perp = sqrt(B1^2 + B2^2)
+
 where B1 and B2 are the magnetic field components.
 
 # Example
@@ -20,8 +22,9 @@ where B1 and B2 are the magnetic field components.
 # Example usage
 B1 = rand(100, 100)  # Example magnetic field component B1
 B2 = rand(100, 100)  # Example magnetic field component B2
+
+# Compute the perpendicular component of the magnetic field
 B_perp = Bperp(B1, B2)
-println(B_perp)
 """
 Bperp(B1::AbstractArray, B2::AbstractArray) = @.  sqrt(B1^2 + B2^2)
 
@@ -40,15 +43,20 @@ Calculate the total magnetic field strength for given magnetic field components 
 
 # Description
 This function calculates the total magnetic field strength using the formula:
+
 Btot = sqrt(Bx^2 + By^2 + Bz^2)
+
 where Bx, By, and Bz are the magnetic field components.
 
+# Example
+```julia
 # Example usage
 Bx = rand(100, 100)  # Example x-component of the magnetic field
 By = rand(100, 100)  # Example y-component of the magnetic field
 Bz = rand(100, 100)  # Example z-component of the magnetic field
+
+# Compute the total magnetic field strength
 B_total = Btot(Bx, By, Bz)
-println(B_total)
 """
 Btot(Bx::AbstractArray, By::AbstractArray, Bz::AbstractArray) = @. sqrt(Bx^2 + By^2 + Bz^2)
 
