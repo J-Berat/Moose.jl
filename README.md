@@ -9,8 +9,7 @@ MOOSE is an interactive tool designed for processing simulated synchrotron emiss
 1. [Main Features](#main-features)
 2. [Installation](#installation)
 3. [Usage](#usage)
-4. [Examples](#examples)
-5. [Contributors](#contributors)
+4. [Contributors](#contributors)
 
 ---
 
