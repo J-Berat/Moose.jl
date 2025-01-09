@@ -57,82 +57,84 @@ Below is an example session that demonstrates how to use `MOOSE()` step-by-step.
 ### **Interactive Session Example**
 ```julia
 MOOSE()
-1. Enter the base directory for simulations (default: /path/to/default/directory):
+1. Base directory for simulations:
 ```julia
+"Enter the base directory for simulations (default: /path/to/default/directory):"
 /path/to/simulations
 ```
 2. Select Simulations
 ```julia
-Available simulations:
+"Available simulations:"
 [1] /path/to/simulations/Simulation1
 [2] /path/to/simulations/Simulation2
 [3] /path/to/simulations/Simulation3
-Do you want to process all simulations or choose specific ones? (Enter 'all' or 'choose') (default: all): 
+"Do you want to process all simulations or choose specific ones? (Enter 'all' or 'choose') (default: all):"
 all
 ```
 3. Define Units and Conversion Factors:
 ```julia
-Is the unit of magnetic field B in μG (microGauss)? (Y/N) (default: N): 
+"Is the unit of magnetic field B in μG (microGauss)? (Y/N) (default: N):"
 n
-Enter the conversion factor for magnetic field B to μG (microGauss): (default: 1000.0): 
+"Enter the conversion factor for magnetic field B to μG (microGauss): (default: 1000.0):"
 
-Is the unit of number density n in cm^-3? (Y/N) (default: N): 
+"Is the unit of number density n in cm^-3? (Y/N) (default: N):" 
 n
-Enter the conversion factor for number density n to cm^-3: (default: 1.0): 
+"Enter the conversion factor for number density n to cm^-3: (default: 1.0):" 
 
-Is the unit of temperature T in K? (Y/N) (default: N): 
+"Is the unit of temperature T in K? (Y/N) (default: N):" 
 y
 ```
 4. Set frequency range:
 ```julia
-Frequency range start (MHz) (default: 115): 
-Frequency range end (MHz) (default: 175): 
+"Frequency range start (MHz) (default: 115):"
+
+"Frequency range end (MHz) (default: 175):" 
 150
-Frequency resolution (MHz) (default: 0.2): 
+"Frequency resolution (MHz) (default: 0.2):" 
 0.183
 ```
 5. Define Box size:
 ```julia
-Side of the Box size (pc), please give a Float (default: 50.0): 
+"Side of the Box size (pc), please give a Float (default: 50.0):" 
 1000.0
-Side of the Box size (pixel) (default: 256): 
+"Side of the Box size (pixel) (default: 256):"
 512
 ```
 6. Enable Faraday rotation or not
 ```julia
-Do you want to include Faraday rotation in the computation of Q and U? (Y/N) (default: N): 
+"Do you want to include Faraday rotation in the computation of Q and U? (Y/N) (default: N):" 
 y
-Faraday depth range start (rad/m^2) (default: -20): 
+"Faraday depth range start (rad/m^2) (default: -20):" 
 -50
-Faraday depth range end (rad/m^2) (default: 20): 
+"Faraday depth range end (rad/m^2) (default: 20):" 
 50
-Faraday depth resolution (rad/m^2) (default: 0.1): 
+"Faraday depth resolution (rad/m^2) (default: 0.1):" 
 0.5
 ```
 7. Instrumental options
 ```julia
-Do you want to perform filtering for Synchrotron data? (Y/N) (default: N): 
+"Do you want to perform filtering for Synchrotron data? (Y/N) (default: N):" 
 n
-Do you want to process all lines of sight (x, y, z), or choose specific ones? (Enter 'all' or 'choose') (default: All): 
+"Do you want to process all lines of sight (x, y, z), or choose specific ones? (Enter 'all' or 'choose') (default: All):"
 all
 ```
 8. Load emissivity file, see next section
 ```
-Enter the path to the interpolation file (default: /path/to/default/emissivity.dat): 
+"Enter the path to the interpolation file (default: /path/to/default/emissivity.dat):" 
 /path/to/emissivity.dat
 ```
 9. Apply Wolfire et al. 2003 electron density prescription
 ```julia
-Do you want to use the Wolfire et al. 2003 prescription? (Y/N) (default: N): 
+"Do you want to use the Wolfire et al. 2003 prescription? (Y/N) (default: N):" 
 y
-Please enter the values for the constants:
+"Please enter the values for the constants:"
 zeta (ionization rate by Cosmic Rays) (default: 1.8e-17): 
 5e-16
-Geff (effective radiation field) (default: 1.0): 
+"Geff (effective radiation field) (default: 1.0):" 
 
-omegaPAH (PAH grain alignment efficiency) (default: 0.5): 
+"omegaPAH (PAH grain alignment efficiency) (default: 0.5):" 
 
-XC (Conversion factor of H into C) (default: 0.00014): 
+"XC (Conversion factor of H into C) (default: 0.00014):" 
 ```
 ### **Notes**
 If no value is entered, the default value is automatically selected.
