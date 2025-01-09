@@ -57,6 +57,7 @@ Below is an example session that demonstrates how to use `MOOSE()` step-by-step.
 ### **Interactive Session Example**
 ```julia
 MOOSE()
+```
 1. Base directory for simulations:
 ```julia
 "Enter the base directory for simulations (default: /path/to/default/directory):"
