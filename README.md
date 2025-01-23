@@ -92,6 +92,7 @@ For example, if your original files are named `mag_field_x.fits` and `n.fits`, y
 ```bash
 mv mag_field_x.fits Bx.fits
 mv n.fits density.fits
+```
 ---
 
 ## **Usage**
