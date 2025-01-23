@@ -70,15 +70,15 @@ Faraday tomography is critical for understanding the magneto-ionic properties of
 MOOSE is designed to process data from numerical MHD simulations and perform Faraday tomography on mock synchrotron emission data. To ensure the tool recognizes and processes the data correctly, it requires the following input files **with specific file names**:
 
 1. **Magnetic field cubes**:
-   - \( Bx.fits \): Magnetic field component along the x-axis.
-   - \( By.fits \): Magnetic field component along the y-axis.
-   - \( Bz.fits \): Magnetic field component along the z-axis.
+   - \( Bx.fits \): Magnetic field component along the x-axis preferably in microG.
+   - \( By.fits \): Magnetic field component along the y-axis preferably in microG.
+   - \( Bz.fits \): Magnetic field component along the z-axis preferably in microG.
    
 2. **Density cube**:
-   - \( density.fits \): Electron number density in cm\(^{-3}\).
+   - \( density.fits \): density preferably in cm\(^{-3}\).
 
 3. **Temperature cube**:
-   - \( temperature.fits \): Temperature in Kelvin.
+   - \( temperature.fits \): Temperature preferably in Kelvin.
 
 ### **Important Note**
 For the code to correctly identify and process these files, they **must** be named exactly as follows:
