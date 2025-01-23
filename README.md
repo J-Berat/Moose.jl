@@ -67,10 +67,31 @@ Faraday tomography is critical for understanding the magneto-ionic properties of
 - The dynamics of the ISM, including turbulence and large-scale flows.
 
 ### **Using MOOSE for Faraday Tomography**
-MOOSE is designed to process data from numerical MHD simulations and perform Faraday tomography on mock synchrotron emission data. It requires the following inputs:
-1. **Magnetic field cubes**: \( Bx.fits, By.fits, Bz.fits \).
-2. **Density cube**: \(density.fits \).
-3. **Temperature cube**: \( temperature.fits \).
+MOOSE is designed to process data from numerical MHD simulations and perform Faraday tomography on mock synchrotron emission data. To ensure the tool recognizes and processes the data correctly, it requires the following input files **with specific file names**:
+
+1. **Magnetic field cubes**:
+   - \( Bx.fits \): Magnetic field component along the x-axis.
+   - \( By.fits \): Magnetic field component along the y-axis.
+   - \( Bz.fits \): Magnetic field component along the z-axis.
+   
+2. **Density cube**:
+   - \( density.fits \): Electron number density in cm\(^{-3}\).
+
+3. **Temperature cube**:
+   - \( temperature.fits \): Temperature in Kelvin.
+
+### **Important Note**
+For the code to correctly identify and process these files, they **must** be named exactly as follows:
+- `Bx.fits`, `By.fits`, `Bz.fits` for the magnetic field components.
+- `density.fits` for the density cube.
+- `temperature.fits` for the temperature cube.
+
+If your data cubes are named differently, you need to rename them before running the code. Failure to do so will result in errors, as the tool depends on these specific file names to match the required inputs.
+
+For example, if your original files are named `mag_field_x.fits` and `n.fits`, you should rename them:
+```bash
+mv mag_field_x.fits Bx.fits
+mv n.fits density.fits
 ---
 
 ## **Usage**
