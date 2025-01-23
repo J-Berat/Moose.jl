@@ -174,8 +174,7 @@ all
 "Enter the path to the interpolation file (default: /path/to/default/emissivity.dat):" 
 /path/to/emissivity.dat
 ```
-9. Apply **Wolfire et al. 2003** ([DOI:  
-10.1086/368016](https://ui.adsabs.harvard.edu/abs/2003ApJ...587..278W/abstract)) electron density prescription
+9. Apply **Wolfire et al. 2003** ([DOI:10.1086/368016](https://ui.adsabs.harvard.edu/abs/2003ApJ...587..278W/abstract)) electron density prescription
 ```julia
 "Do you want to use the Wolfire et al. 2003 prescription? (Y/N) (default: N):" 
 y
