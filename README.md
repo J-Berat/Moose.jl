@@ -7,9 +7,11 @@ MOOSE is an interactive tool designed for processing simulated synchrotron emiss
 
 ## **Table of Contents**
 1. [Main Features](#main-features)
-2. [Installation](#installation)
-3. [Usage](#usage)
-4. [Contributors](#contributors)
+2. [Context](#context)
+3. [Installation](#installation)
+4. [Usage](#usage)
+5. [Caveats](#caveats)
+6. [Contributors](#contributors)
 
 ---
 
@@ -43,6 +45,32 @@ MOOSE is an interactive tool designed for processing simulated synchrotron emiss
         "ImageFiltering", "Random", "Distributions"
     ])
     ```
+---
+## **Context: Faraday Tomography in the ISM**
+
+Faraday tomography is a powerful technique for studying the structure and composition of the interstellar medium (ISM) through its magnetic field and ionized gas. This method leverages the **Faraday rotation effect**, which occurs when a linearly polarized electromagnetic wave passes through a magnetized ionized medium, causing the polarization plane to rotate. The amount of rotation is proportional to the **Faraday depth**, which depends on the strength and direction of the magnetic field, the electron density, and the path length.
+
+### **What Does Faraday Tomography Calculate?**
+Faraday tomography reconstructs the polarized emission as a function of Faraday depth (in units of rad m\(^{-2}\)). By performing a **Rotation Measure (RM) synthesis** (Brentjens & de Bruyn, 2005), it disentangles polarized emission from sources at different Faraday depths along the line of sight. The resulting **Faraday dispersion function** maps polarized emission as a function of Faraday depth, providing insights into:
+- The magnetic field structure along the line of sight.
+- The distribution and density of ionized gas.
+- The contribution of multiple layers of emission within the ISM.
+
+For a detailed introduction to Faraday tomography and RM synthesis, see:
+- Brentjens & de Bruyn (2005) ([DOI: 10.1051/0004-6361:20052990](https://doi.org/10.1051/0004-6361:20052990))
+- Ferrière et al. (2021): ([DOI: 10.1093/mnras/stab1641](https://doi.org/10.1093/mnras/stab1641))
+
+### **Why Use Faraday Tomography?**
+Faraday tomography is critical for understanding the magneto-ionic properties of the ISM, as magnetic fields play a central role in:
+- Electron density distribution.
+- Magnetic fields properties.
+- The dynamics of the ISM, including turbulence and large-scale flows.
+
+### **Using MOOSE for Faraday Tomography**
+MOOSE is designed to process data from numerical MHD simulations and perform Faraday tomography on mock synchrotron emission data. It requires the following inputs:
+1. **Magnetic field cubes**: \( Bx.fits, By.fits, Bz.fits \).
+2. **Density cube**: \(density.fits \).
+3. **Temperature cube**: \( temperature.fits \).
 ---
 
 ## **Usage**
@@ -158,6 +186,16 @@ This data can be directly used in **MOOSE** to analyze synchrotron emission for 
    ```
 2. Use the generated emissivity.dat file in MOOSE for further processing and visualization.
 
+---
+## **Caveats**
+
+While MOOSE provides powerful tools for processing synchrotron emission data, there are some important limitations and assumptions to keep in mind:
+
+1. **Optically Thin Approximation**:
+   - The calculations assume an optically thin medium, which is appropriate for high Galactic latitude regions. This means absorption effects are **not accounted for** in the current implementation.
+
+2. **Simplistic Instrumental Model**:
+   - The instrumental model used in MOOSE is very basic and does not capture the full complexity of real interferometers. Users should be cautious when interpreting results in scenarios that require detailed instrumental simulations.
 ---
 
 ## **Contributors**
