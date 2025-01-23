@@ -62,8 +62,8 @@ For a detailed introduction to Faraday tomography and RM synthesis, see:
 
 ### **Why Use Faraday Tomography?**
 Faraday tomography is critical for understanding the magneto-ionic properties of the ISM, as magnetic fields play a central role in:
-- Electron density distribution.
-- Magnetic fields properties.
+- Cosmic-ray transport.
+- Star formation processes including collapse of molecular clouds or supernovae remnants evolution.
 - The dynamics of the ISM, including turbulence and large-scale flows.
 
 ### **Using MOOSE for Faraday Tomography**
