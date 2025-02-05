@@ -69,16 +69,22 @@ Faraday tomography is critical for understanding the magneto-ionic properties of
 ### **Using MOOSE for Faraday Tomography**
 MOOSE is designed to process data from numerical MHD simulations and perform Faraday tomography on mock synchrotron emission data. To ensure the tool recognizes and processes the data correctly, it requires the following input files **with specific file names**:
 
-1. **Magnetic field cubes**:
-   - \( Bx.fits \): Magnetic field component along the x-axis preferably in microG.
-   - \( By.fits \): Magnetic field component along the y-axis preferably in microG.
-   - \( Bz.fits \): Magnetic field component along the z-axis preferably in microG.
-   
-2. **Density cube**:
-   - \( density.fits \): density preferably in cm\(^{-3}\).
+1. **Magnetic field cubes** (in Cartesian coordinates):  
+   - `Bx.fits`: Magnetic field component along the x-axis preferably in microG.  
+   - `By.fits`: Magnetic field component along the y-axis preferably in microG.  
+   - `Bz.fits`: Magnetic field component along the z-axis preferably in microG. 
 
-3. **Temperature cube**:
-   - \( temperature.fits \): Temperature preferably in Kelvin.
+2. **Neutral Hydrogen Density Cube**:  
+   - `density.fits`: Neutral hydrogen number density \( n_H \) preferably in cm\(^{-3}\).  
+
+3. **Temperature Cube**:  
+   - `temperature.fits`: Gas temperature in Kelvin.  
+
+4. **Electron Density Prescription**:  
+   Instead of requiring a direct electron density cube, MOOSE allows the user to choose how \( n_e \) is computed:
+   - **Wolfire et al. (2003) prescription**: Computes \( n_e \) based on ionization rates and environmental parameters.  
+   - **Proportional to \( n_H \)**: The user provides an ionization fraction, and \( n_e \) is set as \( n_H \times \) ionization fraction.  
+   - **Direct electron density cube (`densityHp.fits`)**: If this option is selected, the electron density cube must be **present in the simulation directory and named exactly** `densityHp.fits`.  
 
 ### **Important Note**
 For the code to correctly identify and process these files, they **must** be named exactly as follows:
