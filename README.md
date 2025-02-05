@@ -110,6 +110,10 @@ MOOSE()              # Start the interactive tool
 ```
 Below is an example session that demonstrates how to use `MOOSE()` step-by-step.
 
+### **Notes**
+If no value is entered, the default value is automatically selected.
+The session processes the selected simulations, using the defined parameters, and prepares the results for analysis.
+
 ### **Interactive Session Example**
 ```julia
 MOOSE()
@@ -180,10 +184,13 @@ all
 "Enter the path to the interpolation file (default: /path/to/default/emissivity.dat):" 
 /path/to/emissivity.dat
 ```
-9. Apply **Wolfire et al. 2003** ([DOI:10.1086/368016](https://ui.adsabs.harvard.edu/abs/2003ApJ...587..278W/abstract)) electron density prescription
+9. **Choose electron density prescription (`ne`)**:
 ```julia
-"Do you want to use the Wolfire et al. 2003 prescription? (Y/N) (default: N):" 
-y
+"Choose electron density prescription: (1) Wolfire et al. 2003, (2) Proportional to nH, (3) Provide ne cube (densityHp.fits) (default: 1):"
+1
+```
+- If **Wolfire et al. 2003** is chosen:
+```julia
 "Please enter the values for the constants:"
 zeta (ionization rate by Cosmic Rays) (default: 1.8e-17): 
 5e-16
@@ -191,11 +198,17 @@ zeta (ionization rate by Cosmic Rays) (default: 1.8e-17):
 
 "omegaPAH (PAH grain alignment efficiency) (default: 0.5):" 
 
-"XC (Conversion factor of H into C) (default: 0.00014):" 
+"XC (Conversion factor of H into C) (default: 0.00014):"
 ```
-### **Notes**
-If no value is entered, the default value is automatically selected.
-The session processes the selected simulations, using the defined parameters, and prepares the results for analysis.
+- If **Proportional to \(n_H\)** is chosen:
+```julia
+"Enter the ionization fraction to compute ne = nH * fraction (default: 0.01):"
+0.05
+```
+- If **Providing \(n_e\) cube** is chosen:
+```julia
+"The electron density cube must be named 'densityHp.fits' and located in the simulation directory."
+```
 
 ### **Synchrotron Emissivity Interpolation**
 
