@@ -187,11 +187,11 @@ Prompt the user to enter values for the Wolfire model constants and return them.
 - `Tuple{Float64, Float64, Float64, Float64}`: A tuple containing:
   - `zeta`: Ionization rate by Cosmic Rays.
   - `Geff`: Effective radiation field.
-  - `omegaPAH`: PAH grain alignment efficiency.
+  - `phiPAH`: PAH grain alignment efficiency.
   - `XC`: Conversion factor of H into C.
 
 # Description
-This function prompts the user to enter values for the constants used in the Wolfire et al. model, specifically the ionization rate by cosmic rays (zeta), the effective radiation field (Geff), the PAH grain alignment efficiency (omegaPAH), and the conversion factor of H into C (XC). Default values are provided for each constant, which the user can override.
+This function prompts the user to enter values for the constants used in the Wolfire et al. model, specifically the ionization rate by cosmic rays (zeta), the effective radiation field (Geff), collision rate parameter for PAH (phiPAH), and the conversion factor of H into C (XC). Default values are provided for each constant, which the user can override.
 
 # Example
 ```julia
@@ -199,16 +199,16 @@ This function prompts the user to enter values for the constants used in the Wol
 zeta, Geff, omegaPAH, XC = WolfireConstants()
 println("zeta: ", zeta)
 println("Geff: ", Geff)
-println("omegaPAH: ", omegaPAH)
+println("phiPAH: ", phiPAH)
 println("XC: ", XC)
 """
 function WolfireConstants()
     
     println("Please enter the values for the constants:")
-    zeta = ask_user("zeta (ionization rate by Cosmic Rays)", 1.8e-17)
+    zeta = ask_user("zeta (ionization rate by Cosmic Rays)", 2.5e-16)
     Geff = ask_user("Geff (effective radiation field)", 1.0)
-    omegaPAH = ask_user("omegaPAH (PAH grain alignment efficiency)", 0.5)
+    phiPAH = ask_user("phiPAH (collision rate parameter for PAH)", 0.5)
     XC = ask_user("XC (Conversion factor of H into C)", 1.4e-4)
     
-    return zeta, Geff, omegaPAH, XC
+    return zeta, Geff, phiPAH, XC
 end

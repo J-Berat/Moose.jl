@@ -20,7 +20,7 @@ cube = rand(100, 100, 50)  # Example data cube with dimensions 100x100x50
 # Function call
 max_values = max(cube)
 """
-max(cube::AbstractArray) = dropdims(maximum(cube, dims=3), dims=3)
+maxCube(cube::AbstractArray) = dropdims(maximum(cube, dims=3), dims=3)
 
 """
     intLOS(cube::AbstractArray, PixelLength_cm::Float64) -> AbstractArray
@@ -323,6 +323,10 @@ function clean_path(path)
     return cleaned_path
 end
 
+function extract_rms(sim_path::String)
+    m = Base.match(r"rms(\d+)", sim_path)
+    return m !== nothing ? m.captures[1] : "unknown"
+end
 """
     print_progress(progress::Int, total::Int)
 
@@ -345,11 +349,34 @@ end
 println()  # Move to the next line after completion
 """
 function print_progress(progress::Int, total::Int)
+    @assert total > 0 "Total must be greater than 0."
+    @assert 0 <= progress <= total "Progress must be between 0 and total."
+
     bar_width = 50
     progress_ratio = progress / total
     filled_length = Int(round(bar_width * progress_ratio))
-    bar = "█" ^ filled_length * " " ^ (bar_width - filled_length)
-    print("\rProgress: |$bar| $progress/$total")
+    empty_length = bar_width - filled_length
+
+    # Codes de couleurs ANSI
+    green = "\u001b[42m"  # Fond vert
+    reset = "\u001b[0m"   # Réinitialisation des couleurs
+    gray = "\u001b[47m"   # Fond gris clair (vide)
+
+    # Construire la barre colorée
+    filled_bar = repeat(" ", filled_length) |> x -> green * x * reset
+    empty_bar = repeat(" ", empty_length) |> x -> gray * x * reset
+
+    # Calcul du pourcentage
+    percentage = Int(round(100 * progress_ratio))
+
+    # Affichage dynamique
+    print("\rProgress: |$filled_bar$empty_bar| $progress/$total ($percentage%)")
+    flush(stdout)
+
+    # Nouvelle ligne une fois terminé
+    if progress == total
+        println()
+    end
 end
 
 """
@@ -420,6 +447,10 @@ function read_optional_file(file, conversion, LOS)
     return isfile(file) ? permute_dims(read_file(file, conversion), LOS) : nothing
 end
 
+function logindgen(nb, minv, maxv)
+    # Generate logarithmically spaced values between minv and maxv
+    10 .^ range(log10(minv), log10(maxv), length=nb)
+end
 
 function create_color_palette()
     return [
@@ -429,22 +460,19 @@ function create_color_palette()
     ]
 end
 
-function AUC(x, y1, y2)
+function AreaUnderCurve(x, y)
+    if length(x) != length(y)
+        error("Vectors x and y must have the same length.")
+    end
+    return sum(diff(x) .* ((y[1:end-1] + y[2:end]) ./ 2))
+end
+
+function AreaBetweenCurves(x, y1, y2)
     if length(x) != length(y1) || length(x) != length(y2)
         error("Vectors x, y1, and y2 must have the same length.")
     end
 
-    # Calculate the difference between the curves (area under the curve of the difference)
-    auc = 0.0
-    for i in 2:length(x)
-        # Trapezoidal rule: (base1 + base2) / 2 * height
-        delta_x = x[i] - x[i-1]
-        delta_y1 = y1[i] + y1[i-1]
-        delta_y2 = y2[i] + y2[i-1]
-        auc += abs(delta_x * (delta_y1 - delta_y2) / 2)
-    end
-
-    return auc
+    sum(diff(x) .* abs.((y1[2:end] .+ y1[1:end-1] .- y2[2:end] .- y2[1:end-1]) ./ 2))
 end
 
 function vectornorm(Ax,Ay,Az)
@@ -520,4 +548,9 @@ function calculate_anglecos(Ax, Ay, Az, Bx, By, Bz)
     theta = acos.(cos_theta)
     
     return cos_theta, theta
+end
+
+function logindgen(nb, minv, maxv)
+    # Generate logarithmically spaced values between minv and maxv
+    10 .^ range(log10(minv), log10(maxv), length=nb)
 end
