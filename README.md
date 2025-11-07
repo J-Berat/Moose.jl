@@ -7,9 +7,11 @@ MOOSE is an interactive tool designed for processing simulated synchrotron emiss
 
 ## **Table of Contents**
 1. [Main Features](#main-features)
-2. [Installation](#installation)
-3. [Usage](#usage)
-4. [Contributors](#contributors)
+2. [Context](#context)
+3. [Installation](#installation)
+4. [Usage](#usage)
+5. [Caveats](#caveats)
+6. [Contributors](#contributors)
 
 ---
 
@@ -44,6 +46,60 @@ MOOSE is an interactive tool designed for processing simulated synchrotron emiss
     ])
     ```
 ---
+## **Context: Faraday Tomography in the ISM**
+
+Faraday tomography is a powerful technique for studying the structure and composition of the interstellar medium (ISM) through its magnetic field and ionized gas. This method leverages the **Faraday rotation effect**, which occurs when a linearly polarized electromagnetic wave passes through a magnetized ionized medium, causing the polarization plane to rotate. The amount of rotation is proportional to the **Faraday depth**, which depends on the strength and direction of the magnetic field, the electron density, and the path length.
+
+### **What Does Faraday Tomography Calculate?**
+Faraday tomography reconstructs the polarized emission as a function of Faraday depth (in units of rad m\(^{-2}\)). By performing a **Rotation Measure (RM) synthesis** (Brentjens & de Bruyn, 2005), it disentangles polarized emission from sources at different Faraday depths along the line of sight. The resulting **Faraday dispersion function** maps polarized emission as a function of Faraday depth, providing insights into:
+- The magnetic field structure along the line of sight.
+- The distribution and density of ionized gas.
+- The contribution of multiple layers of emission within the ISM.
+
+For a detailed introduction to Faraday tomography and RM synthesis, see:
+- Brentjens & de Bruyn (2005) ([DOI: 10.1051/0004-6361:20052990](https://doi.org/10.1051/0004-6361:20052990))
+- Ferrière et al. (2021): ([DOI: 10.1093/mnras/stab1641](https://doi.org/10.1093/mnras/stab1641))
+
+### **Why Use Faraday Tomography?**
+Faraday tomography is critical for understanding the magneto-ionic properties of the ISM, as magnetic fields play a central role in:
+- Cosmic-ray transport.
+- Star formation processes including collapse of molecular clouds or supernovae remnants evolution.
+- The dynamics of the ISM, including turbulence and large-scale flows.
+
+### **Using MOOSE for Faraday Tomography**
+MOOSE is designed to process data from numerical MHD simulations and perform Faraday tomography on mock synchrotron emission data. To ensure the tool recognizes and processes the data correctly, it requires the following input files **with specific file names**:
+
+1. **Magnetic field cubes** (in Cartesian coordinates):  
+   - `Bx.fits`: Magnetic field component along the x-axis preferably in microG.  
+   - `By.fits`: Magnetic field component along the y-axis preferably in microG.  
+   - `Bz.fits`: Magnetic field component along the z-axis preferably in microG. 
+
+2. **Neutral Hydrogen Density Cube**:  
+   - `density.fits`: Neutral hydrogen number density \( n_H \) preferably in cm\(^{-3}\).  
+
+3. **Temperature Cube**:  
+   - `temperature.fits`: Gas temperature in Kelvin.  
+
+4. **Electron Density Prescription**:  
+   Instead of requiring a direct electron density cube, MOOSE allows the user to choose how \( n_e \) is computed:
+   - **Wolfire et al. (2003) prescription**: Computes \( n_e \) based on ionization rates and environmental parameters.  
+   - **Proportional to \( n_H \)**: The user provides an ionization fraction, and \( n_e \) is set as \( n_H \times \) ionization fraction.  
+   - **Direct electron density cube (`densityHp.fits`)**: If this option is selected, the electron density cube must be **present in the simulation directory and named exactly** `densityHp.fits`.  
+
+### **Important Note**
+For the code to correctly identify and process these files, they **must** be named exactly as follows:
+- `Bx.fits`, `By.fits`, `Bz.fits` for the magnetic field components.
+- `density.fits` for the density cube.
+- `temperature.fits` for the temperature cube.
+
+If your data cubes are named differently, you need to rename them before running the code. Failure to do so will result in errors, as the tool depends on these specific file names to match the required inputs.
+
+For example, if your original files are named `mag_field_x.fits` and `n.fits`, you should rename them:
+```bash
+mv mag_field_x.fits Bx.fits
+mv n.fits density.fits
+```
+---
 
 ## **Usage**
 ### **MOOSE**
@@ -53,6 +109,10 @@ include("MOOSE.jl")  # Load the main file
 MOOSE()              # Start the interactive tool
 ```
 Below is an example session that demonstrates how to use `MOOSE()` step-by-step.
+
+### **Notes**
+If no value is entered, the default value is automatically selected.
+The session processes the selected simulations, using the defined parameters, and prepares the results for analysis.
 
 ### **Interactive Session Example**
 ```julia
@@ -124,11 +184,13 @@ all
 "Enter the path to the interpolation file (default: /path/to/default/emissivity.dat):" 
 /path/to/emissivity.dat
 ```
-9. Apply **Wolfire et al. 2003** ([DOI:  
-10.1086/368016](https://ui.adsabs.harvard.edu/abs/2003ApJ...587..278W/abstract)) electron density prescription
+9. **Choose electron density prescription (`ne`)**:
 ```julia
-"Do you want to use the Wolfire et al. 2003 prescription? (Y/N) (default: N):" 
-y
+"Choose electron density prescription: (1) Wolfire et al. 2003, (2) Proportional to nH, (3) Provide ne cube (densityHp.fits) (default: 1):"
+1
+```
+- If **Wolfire et al. 2003** is chosen:
+```julia
 "Please enter the values for the constants:"
 zeta (ionization rate by Cosmic Rays) (default: 1.8e-17): 
 5e-16
@@ -136,11 +198,17 @@ zeta (ionization rate by Cosmic Rays) (default: 1.8e-17):
 
 "omegaPAH (PAH grain alignment efficiency) (default: 0.5):" 
 
-"XC (Conversion factor of H into C) (default: 0.00014):" 
+"XC (Conversion factor of H into C) (default: 0.00014):"
 ```
-### **Notes**
-If no value is entered, the default value is automatically selected.
-The session processes the selected simulations, using the defined parameters, and prepares the results for analysis.
+- If **Proportional to \(n_H\)** is chosen:
+```julia
+"Enter the ionization fraction to compute ne = nH * fraction (default: 0.01):"
+0.05
+```
+- If **Providing \(n_e\) cube** is chosen:
+```julia
+"The electron density cube must be named 'densityHp.fits' and located in the simulation directory."
+```
 
 ### **Synchrotron Emissivity Interpolation**
 
@@ -158,6 +226,16 @@ This data can be directly used in **MOOSE** to analyze synchrotron emission for 
    ```
 2. Use the generated emissivity.dat file in MOOSE for further processing and visualization.
 
+---
+## **Caveats**
+
+While MOOSE provides powerful tools for processing synchrotron emission data, there are some important limitations and assumptions to keep in mind:
+
+1. **Optically Thin Approximation**:
+   - The calculations assume an optically thin medium, which is appropriate for high Galactic latitude regions. This means absorption effects are **not accounted for** in the current implementation.
+
+2. **Simplistic Instrumental Model**:
+   - The instrumental model used in MOOSE is very basic and does not capture the full complexity of real interferometers. Users should be cautious when interpreting results in scenarios that require detailed instrumental simulations.
 ---
 
 ## **Contributors**
