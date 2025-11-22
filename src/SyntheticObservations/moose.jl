@@ -362,9 +362,8 @@ Flow:
     df = CSV.File(interpolation_file_path) |> DataFrame
 
     ne_option = ""
-    ne_default = string(get(config, "ne_option", "1"))
     while true
-        ne_option = ask_user("Choose electron density prescription: (1) Wolfire et al. 2003, (2) Proportional to nH, (3) Provide ne cube", ne_default)
+        ne_option = ask_user("Choose electron density prescription: (1) Wolfire et al. 2003, (2) Proportional to nH, (3) Provide ne cube", get(config, "ne_option", "1"))
         ne_option in ("1", "2", "3") && break
         println("[Warning] Please choose 1, 2, or 3 for the electron density prescription.")
     end
