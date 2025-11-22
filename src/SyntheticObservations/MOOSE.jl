@@ -205,6 +205,11 @@ Description:
  Author: Jack Berat
  MOOSE is an interactive tool to process synchrotron mock observation data.
 
+ Non-interactive CLI:
+  For scripted or assistive use, run `julia src/MOOSE_cli.jl --help` to see the
+  full set of command-line flags (e.g., --config, --base-dir, --simu, --los,
+  --quiet) for configuring MOOSE without prompts.
+
  It computes the synchrotron Stokes parameters Q and U for a set of simulation outputs,
  optionally applying Faraday rotation, noise and primary beam filtering.
 
@@ -280,7 +285,7 @@ Flow:
                 isempty(candidate) && continue
                 parsed = tryparse(Int, candidate)
                 if parsed === nothing
-                    println("[Warning] Ignoring invalid simulation index: $(candidate)")
+                    println("[Warning] Ignoring invalid simulation index: $(candidate). Enter comma-separated integers like 1,3,5.")
                 elseif parsed < 1 || parsed > length(simu_list)
                     println("[Warning] Simulation index $(parsed) is out of range (1-$(length(simu_list))).")
                 else
@@ -288,7 +293,7 @@ Flow:
                 end
             end
             !isempty(parsed_indices) && break
-            println("[Error] No valid simulation indices provided. Please try again.")
+            println("[Error] No valid simulation indices provided. Use comma-separated integers like 1,3,5 and try again.")
         end
         config["simu_indices"] = join(parsed_indices, ",")
         map(i -> simu_list[i], parsed_indices)
