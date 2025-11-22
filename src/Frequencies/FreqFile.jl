@@ -14,7 +14,7 @@ This function generates a range of frequencies between the specified starting an
 
 # Example
 ```julia
-# Create a file with 10 frequencies ranging from 100 Hz to 200 Hz
+# Create a file with 10 frequencies ranging from 100 Hz to 200 Hz (inclusive)
 CreateFreqFile(100.0, 200.0, 10, "output_directory")
 
 # File `output_directory/FreqHz.txt` will contain:
@@ -29,7 +29,7 @@ function CreateFreqFile(start_freq_Hz, end_freq_Hz, num_freq, repertory)
     
     repertory = isempty(repertory) ? "" : repertory * "/"
 
-    freq_vector = range(start_freq_Hz, end_freq_Hz, num_freq)
+    freq_vector = range(start_freq_Hz, stop=end_freq_Hz, length=num_freq)
     
     path = joinpath(repertory, "FreqHz.txt")
 
