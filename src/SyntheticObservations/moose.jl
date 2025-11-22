@@ -67,6 +67,9 @@ Enter the lines of sight you want to process, separated by commas (e.g., x,y): x
 """
 
 
+using Printf
+
+
 function print_logo()
    cols = displaysize(stdout)[2]
    rainbow = [:red, :yellow, :green, :cyan, :blue, :magenta]
@@ -135,7 +138,12 @@ function print_logo()
 end
 
 function load_previous_config(config_path="moose_config.json")
-    isfile(config_path) ? JSON.parsefile(config_path) : Dict{String, Any}()
+    if isfile(config_path)
+        return JSON.parsefile(config_path)
+    else
+        println("[Info] No existing config found at $(config_path). Starting with defaults.")
+        return Dict{String, Any}()
+    end
 end
 
 function save_config(config::Dict, config_path="moose_config.json")
@@ -144,20 +152,38 @@ function save_config(config::Dict, config_path="moose_config.json")
    end
 end
 
-function write_summary_log(base_dir, chosen_simu, chosen_LOS, elapsed)
+function format_duration(elapsed)
+    total_ms = Dates.value(elapsed)
+    hours = total_ms ÷ 3_600_000
+    minutes = (total_ms % 3_600_000) ÷ 60_000
+    seconds = (total_ms % 60_000) ÷ 1_000
+    milliseconds = total_ms % 1_000
+    return @sprintf("%02d:%02d:%02d.%03d", hours, minutes, seconds, milliseconds)
+end
+
+function write_summary_log(base_dir, chosen_simu, chosen_LOS, elapsed; config_path="moose_config.json", faraday="N", responseSynchrotron="N", add_noise="N", interpolation_file_path=nothing, conversionB=nothing, conversionn=nothing, conversionT=nothing, ne_option=nothing)
     log_path = joinpath(base_dir, "MOOSE_summary.log")
-    open(log_path, "w") do io
+    open(log_path, "a") do io
+        println(io)
         println(io, "MOOSE Summary Log")
         println(io, "=================")
+        println(io, "Run completed at: $(Dates.format(now(), "yyyy-mm-dd HH:MM:SS"))")
         println(io, "Simulations processed:")
         for simu in chosen_simu
             println(io, simu)
         end
         println(io, "Lines of sight: $(join(chosen_LOS, ", "))")
         println(io, "Output directory: $base_dir")
-        println(io, "Execution completed at: $(now())")
-        println(io, "Total execution time: $(Dates.value(elapsed) ÷ 1_000) seconds")
-        println(io, "Using config file: moose_config.json")
+        println(io, "Total execution time: $(format_duration(elapsed))")
+        println(io, "Config file: $(config_path)")
+        conversionB !== nothing && println(io, "Conversion B (to μG): $(conversionB)")
+        conversionn !== nothing && println(io, "Conversion n (to cm^-3): $(conversionn)")
+        conversionT !== nothing && println(io, "Conversion T (to K): $(conversionT)")
+        println(io, "Faraday rotation: $(faraday)")
+        println(io, "Synchrotron filtering: $(responseSynchrotron)")
+        println(io, "Noise added: $(add_noise)")
+        interpolation_file_path !== nothing && println(io, "Interpolation file: $(interpolation_file_path)")
+        ne_option !== nothing && println(io, "Electron density option: $(ne_option)")
     end
 end
 
@@ -212,114 +238,192 @@ Flow:
        return
    end
 
-   if !quiet
-       print_logo()
-   end
+    if !quiet
+        print_logo()
+    end
 
-   if reset_config
-       println("[Info] Previous configuration ignored (reset_config=true)")
-   end
-   config = reset_config ? Dict{String, Any}() : load_previous_config()
-   start_time = now()
+    default_config_path = joinpath(pwd(), "moose_config.json")
+    if reset_config
+        println("[Info] Previous configuration ignored (reset_config=true)")
+        config = Dict{String, Any}()
+        config_path = default_config_path
+    else
+        config_path = ask_user("Enter the path to the configuration file to load", default_config_path)
+        config = load_previous_config(config_path)
+    end
+    start_time = now()
 
-   base_dir = get(config, "base_dir", ask_user("Enter the base directory for simulations", pwd()))
-   config["base_dir"] = base_dir
+    base_dir = ""
+    while true
+        candidate_dir = ask_user("Enter the base directory for simulations", get(config, "base_dir", pwd()))
+        if isdir(candidate_dir)
+            base_dir = candidate_dir
+            break
+        else
+            println("[Error] Base directory $(candidate_dir) does not exist. Please provide a valid folder.")
+        end
+    end
+    config["base_dir"] = base_dir
 
-   simu_list = get_simulation_list(base_dir)
-   display_simulations(simu_list)
+    simu_list = get_simulation_list(base_dir)
+    isempty(simu_list) && error("No simulations containing FITS files were found in $(base_dir).")
+    display_simulations(simu_list)
 
-   simu_choice = ask_user("Do you want to process all simulations or choose specific ones? (Enter 'all' or 'choose')", "all")
-   chosen_simu = if uppercase(simu_choice) == "CHOOSE"
-       indices = split(ask_user("Enter the indices of the simulations you want to process, separated by commas (e.g., 1,3,5): ", ""), ",")
-       map(i -> simu_list[parse(Int, i)], indices)
-   else
-       simu_list
-   end
-   config["chosen_simu"] = chosen_simu
+    simu_choice = ask_user("Do you want to process all simulations or choose specific ones? (Enter 'all' or 'choose')", get(config, "simu_choice", "all"))
+    chosen_simu = if uppercase(simu_choice) == "CHOOSE"
+        parsed_indices = Int[]
+        while true
+            raw_indices = split(ask_user("Enter the indices of the simulations you want to process, separated by commas (e.g., 1,3,5): ", get(config, "simu_indices", "")), ",")
+            empty!(parsed_indices)
+            for raw_idx in raw_indices
+                candidate = strip(raw_idx)
+                isempty(candidate) && continue
+                parsed = tryparse(Int, candidate)
+                if parsed === nothing
+                    println("[Warning] Ignoring invalid simulation index: $(candidate)")
+                elseif parsed < 1 || parsed > length(simu_list)
+                    println("[Warning] Simulation index $(parsed) is out of range (1-$(length(simu_list))).")
+                else
+                    push!(parsed_indices, parsed)
+                end
+            end
+            !isempty(parsed_indices) && break
+            println("[Error] No valid simulation indices provided. Please try again.")
+        end
+        config["simu_indices"] = join(parsed_indices, ",")
+        map(i -> simu_list[i], parsed_indices)
+    else
+        simu_list
+    end
+    config["chosen_simu"] = chosen_simu
 
-   conversionB = ask_user("Enter the conversion factor for magnetic field B to μG (microGauss):", get(config, "conversionB", 1.0))
-   conversionn = ask_user("Enter the conversion factor for number density n to cm^-3:", get(config, "conversionn", 1.0))
-   conversionT = ask_user("Enter the conversion factor for temperature T to K:", get(config, "conversionT", 1.0))
-   config["conversionB"] = conversionB
-   config["conversionn"] = conversionn
-   config["conversionT"] = conversionT
+    conversionB = ask_user("Enter the conversion factor for magnetic field B to μG (microGauss):", Float64(get(config, "conversionB", 1.0)))
+    conversionn = ask_user("Enter the conversion factor for number density n to cm^-3:", Float64(get(config, "conversionn", 1.0)))
+    conversionT = ask_user("Enter the conversion factor for temperature T to K:", Float64(get(config, "conversionT", 1.0)))
+    config["conversionB"] = conversionB
+    config["conversionn"] = conversionn
+    config["conversionT"] = conversionT
 
-   PixelLength_pc, PixelLength_cm, BoxLength_pc, DistanceArray = DistanceParameters()
-   nuArray = FrequencyParameters()
-   FaradayRotation = ask_user("Do you want to include Faraday rotation in the computation of Q and U? (Y/N)", get(config,"FaradayRotation", "N"))
-   config["FaradayRotation"] = FaradayRotation
-   PhiArray = uppercase(FaradayRotation) == "Y" ? FaradayParameters() : nothing
+    PixelLength_pc, PixelLength_cm, BoxLength_pc, DistanceArray = DistanceParameters()
+    nuArray = FrequencyParameters()
+    FaradayRotation = ask_user("Do you want to include Faraday rotation in the computation of Q and U? (Y/N)", get(config,"FaradayRotation", "N"))
+    faraday_flag = uppercase(FaradayRotation)
+    config["FaradayRotation"] = FaradayRotation
+    PhiArray = faraday_flag == "Y" ? FaradayParameters() : nothing
 
-   responseSynchrotron = ask_user("Do you want to perform filtering (primary beam) for Synchrotron data? (Y/N)", get(config, "responseSynchrotron", "N"))
-   kernel_size_synchrotron = uppercase(responseSynchrotron) == "Y" ? ask_user("What kernel size (in pix) do you want for Synchrotron filtering?", get(config, "kernel_size_synchrotron", 11)) : nothing
-   config["responseSynchrotron"] = responseSynchrotron
-   config["kernel_size_synchrotron"] = kernel_size_synchrotron
+    responseSynchrotron = ask_user("Do you want to perform filtering (primary beam) for Synchrotron data? (Y/N)", get(config, "responseSynchrotron", "N"))
+    kernel_size_synchrotron = uppercase(responseSynchrotron) == "Y" ? ask_user("What kernel size (in pix) do you want for Synchrotron filtering?", get(config, "kernel_size_synchrotron", 11)) : nothing
+    config["responseSynchrotron"] = responseSynchrotron
+    config["kernel_size_synchrotron"] = kernel_size_synchrotron
 
-   add_noise = ask_user("Do you want to add noise to Q and U? (Y/N)", get(config, "add_noise", "N"))
-   config["add_noise"] = add_noise
+    add_noise = ask_user("Do you want to add noise to Q and U? (Y/N)", get(config, "add_noise", "N"))
+    config["add_noise"] = add_noise
 
-   SNR_nu = uppercase(add_noise) == "Y" ? ask_user("Enter the desired SNR in the frequency space:", get(config, "SNR_nu", 0.9)) : nothing
-   config["SNR_nu"] = SNR_nu
+    SNR_nu = uppercase(add_noise) == "Y" ? ask_user("Enter the desired SNR in the frequency space:", get(config, "SNR_nu", 0.9)) : nothing
+    config["SNR_nu"] = SNR_nu
 
-   list_LOS = ["x", "y", "z"]
-   LOS_choice = ask_user("Do you want to process all lines of sight (x, y, z), or choose specific ones? (Enter 'all' or 'choose')", get(config, "LOS_choice", "All"))
-   chosen_LOS = uppercase(LOS_choice) == "CHOOSE" ? split(ask_user("Enter the lines of sight you want to process, separated by commas (e.g., x,y): ", ""), ",") : list_LOS
-   config["chosen_LOS"] = chosen_LOS
+    list_LOS = ["x", "y", "z"]
+    LOS_choice = ask_user("Do you want to process all lines of sight (x, y, z), or choose specific ones? (Enter 'all' or 'choose')", get(config, "LOS_choice", "All"))
+    chosen_LOS = if uppercase(LOS_choice) == "CHOOSE"
+        valid_los = String[]
+        while true
+            los_input = split(ask_user("Enter the lines of sight you want to process, separated by commas (e.g., x,y): ", get(config, "chosen_LOS_input", "")), ",")
+            empty!(valid_los)
+            for los in los_input
+                candidate = lowercase(strip(los))
+                isempty(candidate) && continue
+                if candidate in list_LOS
+                    push!(valid_los, candidate)
+                else
+                    println("[Warning] Ignoring invalid line of sight: $(candidate). Valid options are x, y, z.")
+                end
+            end
+            !isempty(valid_los) && break
+            println("[Error] No valid lines of sight provided. Please try again.")
+        end
+        config["chosen_LOS_input"] = join(valid_los, ",")
+        valid_los
+    else
+        list_LOS
+    end
+    config["chosen_LOS"] = chosen_LOS
 
-   interpolation_file_path = ask_user("Enter the path to the interpolation file", get(config, "interpolation_file_path", joinpath(homedir(), "emissivity.dat")))
-   config["interpolation_file_path"] = interpolation_file_path
-   df = CSV.File(interpolation_file_path) |> DataFrame
+    interpolation_default = get(config, "interpolation_file_path", joinpath(homedir(), "emissivity.dat"))
+    interpolation_file_path = interpolation_default
+    while true
+        interpolation_file_path = ask_user("Enter the path to the interpolation file", interpolation_file_path)
+        if isfile(interpolation_file_path)
+            break
+        else
+            println("[Error] The interpolation file $(interpolation_file_path) was not found. Please provide a valid path.")
+        end
+    end
+    config["interpolation_file_path"] = interpolation_file_path
+    df = CSV.File(interpolation_file_path) |> DataFrame
 
-   ne_option = ask_user("Choose electron density prescription: (1) Wolfire et al. 2003, (2) Proportional to nH, (3) Provide ne cube", get(config, "ne_option", "1"))
-   config["ne_option"] = ne_option
+    ne_option = ""
+    ne_default = string(get(config, "ne_option", "1"))
+    while true
+        ne_option = ask_user("Choose electron density prescription: (1) Wolfire et al. 2003, (2) Proportional to nH, (3) Provide ne cube", ne_default)
+        ne_option in ("1", "2", "3") && break
+        println("[Warning] Please choose 1, 2, or 3 for the electron density prescription.")
+    end
+    config["ne_option"] = ne_option
 
-   if ne_option == "1"
-       zeta, Geff, omegaPAH, XC = WolfireConstants()
-   elseif ne_option == "2"
-       IonizationFraction = ask_user("Enter the ionization fraction for the alternative prescription:", get(config, "IonizationFraction", 0.01))
-       config["IonizationFraction"] = IonizationFraction
-   else
-       println("The electron density cube must be present in the simulation directory and named 'densityHp.fits'")
-   end
+    if ne_option == "1"
+        zeta, Geff, omegaPAH, XC = WolfireConstants()
+    elseif ne_option == "2"
+        IonizationFraction = ask_user("Enter the ionization fraction for the alternative prescription:", get(config, "IonizationFraction", 0.01))
+        config["IonizationFraction"] = IonizationFraction
+    else
+        missing_cubes = [simu for simu in chosen_simu if !isfile(joinpath(simu, "densityHp.fits"))]
+        if !isempty(missing_cubes)
+            error("Electron density cube 'densityHp.fits' is missing for: $(join(missing_cubes, ", ")).")
+        end
+    end
 
-   total_simu = length(chosen_simu)
-   for (i, simu) in enumerate(chosen_simu)
+    save_path_default = get(config, "config_path", joinpath(base_dir, "moose_config.json"))
+    config_path = ask_user("Enter the path where the configuration should be saved", save_path_default)
+    config["config_path"] = config_path
 
-       println("Processing Simulation: $(simu)")
-       
-       for LOS in chosen_LOS
-               println(Crayon(foreground=:yellow, bold=true)("→ Processing LOS: $(LOS)"))
+    total_simu = length(chosen_simu)
+    for (i, simu) in enumerate(chosen_simu)
 
-           if ne_option == "1"
-               ProcessSynchrotron(simu, LOS, FaradayRotation, responseSynchrotron, df, add_noise, SNR_nu,
-                   kernel_size_synchrotron, zeta, Geff, omegaPAH, XC, nuArray, PhiArray, PixelLength_pc, PixelLength_cm, 
-                   BoxLength_pc, DistanceArray, conversionn, conversionT, conversionB)
-           elseif ne_option == "2"
-               ProcessSynchrotron(simu, LOS, FaradayRotation, responseSynchrotron, df, add_noise, SNR_nu,
-                   kernel_size_synchrotron, IonizationFraction, nuArray, PhiArray, PixelLength_pc, PixelLength_cm,
-                   BoxLength_pc, DistanceArray, conversionn, conversionT, conversionB)
-           else
-               ProcessSynchrotron(simu, LOS, FaradayRotation, responseSynchrotron, df, add_noise, SNR_nu, kernel_size_synchrotron, 
-                   nuArray, PhiArray, PixelLength_pc, PixelLength_cm, 
-                   BoxLength_pc, DistanceArray, conversionn, conversionT, conversionB)
-           end
-       end
-       if length(chosen_simu) > 1
-           println("Finished processing all chosen LOS for simulation: $simu")
-           print_progress(i, total_simu) 
-       end
-   end
+        println("Processing Simulation: $(simu)")
 
-   println("Finished processing all simulations.")
+        for LOS in chosen_LOS
+                println(Crayon(foreground=:yellow, bold=true)("→ Processing LOS: $(LOS)"))
 
-   elapsed = now() - start_time
-   println(Crayon(foreground=:green, bold=true)("Summary:"))
-   println(Crayon(foreground=:green)("Simulations processed: $(join(chosen_simu, ", "))"))
-   println(Crayon(foreground=:green)("Lines of sight: $(join(chosen_LOS, ", "))"))
-   println(Crayon(foreground=:green)("Output directory: $base_dir"))
-   println(Crayon(foreground=:green)("Total execution time: $(Dates.value(elapsed) ÷ 1_000) seconds"))
-   reset_config == true ? println(Crayon(foreground=:green)("Using config file: moose_config.json")) : println(Crayon(foreground=:green)("No config file used."))
-       
-    save_config(config, base_dir * "/moose_config.json")
-    write_summary_log(base_dir, chosen_simu, chosen_LOS, elapsed)
+            if ne_option == "1"
+                ProcessSynchrotron(simu, LOS, FaradayRotation, responseSynchrotron, df, add_noise, SNR_nu,
+                    kernel_size_synchrotron, zeta, Geff, omegaPAH, XC, nuArray, PhiArray, PixelLength_pc, PixelLength_cm,
+                    BoxLength_pc, DistanceArray, conversionn, conversionT, conversionB)
+            elseif ne_option == "2"
+                ProcessSynchrotron(simu, LOS, FaradayRotation, responseSynchrotron, df, add_noise, SNR_nu,
+                    kernel_size_synchrotron, IonizationFraction, nuArray, PhiArray, PixelLength_pc, PixelLength_cm,
+                    BoxLength_pc, DistanceArray, conversionn, conversionT, conversionB)
+            else
+                ProcessSynchrotron(simu, LOS, FaradayRotation, responseSynchrotron, df, add_noise, SNR_nu, kernel_size_synchrotron,
+                    nuArray, PhiArray, PixelLength_pc, PixelLength_cm,
+                    BoxLength_pc, DistanceArray, conversionn, conversionT, conversionB)
+            end
+        end
+        if length(chosen_simu) > 1
+            println("Finished processing all chosen LOS for simulation: $simu")
+            print_progress(i, total_simu)
+        end
+    end
+
+    println("Finished processing all simulations.")
+
+    elapsed = now() - start_time
+    println(Crayon(foreground=:green, bold=true)("Summary:"))
+    println(Crayon(foreground=:green)("Simulations processed: $(join(chosen_simu, ", "))"))
+    println(Crayon(foreground=:green)("Lines of sight: $(join(chosen_LOS, ", "))"))
+    println(Crayon(foreground=:green)("Output directory: $base_dir"))
+    println(Crayon(foreground=:green)("Total execution time: $(format_duration(elapsed))"))
+    println(Crayon(foreground=:green)("Configuration saved to: $(config_path)"))
+
+    save_config(config, config_path)
+    write_summary_log(base_dir, chosen_simu, chosen_LOS, elapsed; config_path=config_path, faraday=faraday_flag, responseSynchrotron=responseSynchrotron, add_noise=add_noise, interpolation_file_path=interpolation_file_path, conversionB=conversionB, conversionn=conversionn, conversionT=conversionT, ne_option=ne_option)
 end

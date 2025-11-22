@@ -42,6 +42,8 @@ Key source files live under `src/`:
    julia --project -e 'using Pkg; Pkg.instantiate()'
    ```
 
+> **Note:** Some containerized or CI environments (including the one used for automated linting here) do not ship with Julia by default. In those cases, install Julia first or run commands on a machine where Julia is available before attempting to instantiate or test the project.
+
 ---
 
 ## Usage
@@ -59,6 +61,27 @@ Key source files live under `src/`:
 ### Tips
 - The emissivity interpolation file defaults to `Synchrotron/emissivity.dat` under your home directory; provide a different path when prompted if needed.
 - Use the `help=true` keyword (`MOOSE(help=true)`) to print a detailed description of available options without running the pipeline.
+
+### How to confirm things work
+- **Smoke test the installation:** run `julia --project -e 'using MOOSE; MOOSE(help=true)'`. This precompiles the package and prints the built-in help without needing any data files.
+- **Interactive end-to-end run:** follow the standard `MOOSE()` workflow described above with a real simulation directory. Success is indicated by FITS outputs next to your simulation files and a `MOOSE_summary.log` entry summarizing the run.
+- **Batch run with CLI flags (no JSON needed):** call `julia --project src/MOOSE_cli.jl --base-dir /data/sims --simu simuA --simu simuB --los x --interpolation /data/emissivity.csv --faraday Y --phimin -20 --phimax 20 --dphi 0.1 --filtering Y --kernel-size 2.5 --noise N`. The script writes the combined configuration to a temporary file and feeds it to `MOOSE_from_config`.
+- **Config-driven batch run:** prepare a JSON config (for example by saving answers from a previous interactive session) and run `julia --project src/MOOSE_cli.jl /path/to/config.json --quiet`. This reuses stored parameters and will append to `MOOSE_summary.log` on completion.
+
+### CLI overrides available
+`src/MOOSE_cli.jl` now accepts the following flags to build a configuration on the fly or override a JSON file:
+
+- `--config <path>`: optional path to load and overwrite; if omitted, a temporary file is used.
+- `--quiet`: hide the startup logo.
+- `--base-dir <path>`: base directory containing simulations.
+- `--simu <path>`: simulation directory (repeatable).
+- `--los <x|y|z>`: line of sight to process (repeatable).
+- `--interpolation <path>`: emissivity/interpolation data file.
+- `--conversionB`, `--conversionn`, `--conversionT`: conversion factors for magnetic field (µG), density (cm⁻³), and temperature (K).
+- `--faraday <Y|N>`, `--phimin`, `--phimax`, `--dphi`: enable Faraday rotation and set the RM synthesis grid.
+- `--filtering <Y|N>`, `--kernel-size <value>`: toggle synchrotron filtering and provide the filter kernel size.
+- `--noise <Y|N>`, `--snr <value>`: enable additive noise and set the signal-to-noise ratio per frequency.
+- `--ne-option <1|2|3>`: choose the electron density prescription.
 
 ---
 
