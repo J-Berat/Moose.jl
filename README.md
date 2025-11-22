@@ -35,14 +35,21 @@ MOOSE is an interactive tool designed for processing simulated synchrotron emiss
     cd moose
     ```
 
-2. Install required Julia dependencies:
+2. Install the Julia dependencies using the provided `Project.toml`:
+    ```bash
+    julia --project=. -e 'using Pkg; Pkg.instantiate()'
+    ```
+    This activates the project in the repository root and installs all packages defined in `Project.toml` (and pins versions if you commit a `Manifest.toml`).
+
+    If you prefer to install packages manually instead of relying on the project file, you can run:
     ```julia
     using Pkg
+    Pkg.activate(".")
     Pkg.add([
         "FITSIO", "DataFrames", "CSV", "Interpolations", "Dierckx",
-        "LinearAlgebra", "SpecialFunctions", "QuadGK", "StatsBase",
-        "Statistics", "KernelDensity", "StringEncodings", "FFTW",
-        "ImageFiltering", "Random", "Distributions"
+        "SpecialFunctions", "QuadGK", "StatsBase", "KernelDensity",
+        "StringEncodings", "FFTW", "ImageFiltering", "Distributions",
+        "Crayons", "JSON", "Images"
     ])
     ```
 ---
@@ -109,6 +116,36 @@ include("MOOSE.jl")  # Load the main file
 MOOSE()              # Start the interactive tool
 ```
 Below is an example session that demonstrates how to use `MOOSE()` step-by-step.
+
+### **Non-interactive mode**
+If you already have a JSON configuration file (for example one previously written by the interactive run), you can bypass the prompts by using `MOOSE_from_config`:
+```julia
+include("MOOSE_from_config.jl")
+MOOSEFromConfig.MOOSE_from_config("path/to/moose_config.json"; quiet=true)
+```
+The configuration keys mirror those saved by `MOOSE()` (e.g. `base_dir`, `chosen_simu`, `chosen_LOS`, `conversionB`, `FaradayRotation`, etc.).
+
+For batch or Python-driven runs, you can also call a CLI wrapper that accepts the same JSON schema (including nested keys such as `freq`, `box`, `faraday`, `ne`, and `emissivity` used by the Streamlit example):
+
+```bash
+julia --project=. src/MOOSE_cli.jl /path/to/config.json [--quiet]
+```
+
+Minimal example of the nested schema consumed by the CLI:
+
+```json
+{
+  "base_dir": "/path/to/simulations",
+  "simulations": ["SimuA", "SimuB"],
+  "freq": {"start": 115.0, "end": 175.0, "step": 0.2},
+  "box": {"size_pc": 50.0, "npix": 256},
+  "faraday": {"enabled": true, "phimin": -20.0, "phimax": 20.0, "dphi": 0.1},
+  "ne": {"mode": 1, "ion_fraction": 0.01},
+  "emissivity": {"path": "emissivity.dat"}
+}
+```
+
+Relative paths inside the config are resolved against `base_dir`, and the script validates both the base directory and the emissivity file before running.
 
 ### **Notes**
 If no value is entered, the default value is automatically selected.
