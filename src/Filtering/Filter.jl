@@ -21,6 +21,7 @@ image = rand(256, 256)  # Example image
 kernel = ones(3, 3) / 9  # Example kernel for low-pass filtering
 
 filtered_image = HighPass(image, kernel)
+```
 """
 function HighPass(image, kernel)
     filtered_image = imfilter(image, kernel)
