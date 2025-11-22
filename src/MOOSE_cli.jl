@@ -1,5 +1,4 @@
-include(joinpath(@__DIR__, "SyntheticObservations", "MOOSE_from_config.jl"))
-using .MOOSEFromConfig
+using MOOSE
 
 if abspath(PROGRAM_FILE) == @__FILE__
     if length(ARGS) < 1
@@ -9,5 +8,5 @@ if abspath(PROGRAM_FILE) == @__FILE__
     config_path = ARGS[1]
     quiet = any(arg -> arg == "--quiet", ARGS[2:end])
 
-    MOOSEFromConfig.MOOSE_from_config(config_path; quiet = quiet)
+    MOOSE.MOOSE_from_config(config_path; quiet = quiet)
 end

@@ -6,7 +6,7 @@ using DataFrames
 using Dates
 using JSON
 
-include("MOOSE.jl")
+using ..: WolfireConstants, ProcessSynchrotron, print_logo, print_progress, save_config, write_summary_log
 
 const PARSEC_TO_CM = 3.0857e18
 

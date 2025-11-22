@@ -26,8 +26,9 @@
 
 ## Project layout
 Key source files live under `src/`:
+- `MOOSE.jl`: module entrypoint that includes all domain-specific components and re-exports the main run helpers.
 - `SyntheticObservations/MOOSE.jl`: interactive entrypoint that orchestrates the full workflow.
-- `File_IO/ReadSimulation.jl`: helpers for loading simulation cubes and metadata.
+- `FileIO/ReadSimulation.jl`: helpers for loading simulation cubes and metadata.
 - `Synchrotron/ProcessSynchrotron.jl`: computations for Stokes parameters and emissivity interpolation.
 - `Faraday/RMSynthesis.jl`: utilities for RM synthesis and Faraday depth handling.
 - `Filtering/Filter.jl` and `Utils/*.jl`: common filtering, plotting, and logging helpers.
@@ -50,7 +51,7 @@ Key source files live under `src/`:
    ```
 2. Load the interactive tool and launch it:
    ```julia
-   include("src/SyntheticObservations/MOOSE.jl")
+   using MOOSE
    MOOSE()
    ```
 3. Follow the prompts to choose simulations, set unit conversions, select lines of sight, and enable options such as Faraday rotation or filtering. Defaults are provided for each prompt, and previous answers are reused when `moose_config.json` is present.
