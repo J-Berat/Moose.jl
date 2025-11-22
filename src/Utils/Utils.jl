@@ -128,26 +128,31 @@ end
 
 """
     ask_user(prompt::String, default::Float64) -> Float64
+    ask_user(prompt::String, default::Int64) -> Int64
+    ask_user(prompt::String, default::String) -> String
 
-Prompt the user for input with a default float value.
+Prompt the user for input with a default value.
 
 # Arguments
 - `prompt::String`: The message to display to the user.
-- `default::Float64`: The default float64 value to return if the user provides no input.
-OR
-- `default::Int`: The default integer value to return if the user provides no input.
-OR
-- `default::String`: The default string to return if the user provides no input.
+- `default::Float64`: Default value returned when the user presses Enter and a floating-point response is expected.
+- `default::Int64`: Default value returned when the user presses Enter and an integer response is expected.
+- `default::String`: Default value returned when the user presses Enter and a string response is expected.
 
 # Returns
-- `Float64`: The value entered by the user, or the default value if no input is provided.
+- `Float64`: When `default` is `Float64`, returns the parsed float or the default.
+- `Int64`: When `default` is `Int64`, returns the parsed integer or the default.
+- `String`: When `default` is `String`, returns the user input trimmed of whitespace or the default.
 
 # Description
-This function prompts the user for input and returns the entered value as a `Float64`. If the user provides no input, the function returns the specified default value.
+These overloads prompt the user for input and attempt to parse it into the type of the provided default. If the user provides no input, the respective default value is returned.
 
 # Example
 ```julia
-value = ask_user("Enter a float value", 3.14)
+float_value = ask_user("Enter a float value", 3.14)
+int_value = ask_user("Enter an integer value", 2)
+name = ask_user("Enter your name", "Anonymous")
+```
 """
 function ask_user(prompt::String, default::Float64)
     while true
