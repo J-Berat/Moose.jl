@@ -117,10 +117,15 @@ function run_with_config(config_path, quiet, overrides)
     cfg = merge(load_base_config(config_path), overrides)
 
     if config_path === nothing
-        mktemp() do path, io
-            JSON.print(io, cfg)
-            close(io)
-            MOOSE.MOOSE_from_config(path; quiet = quiet)
+        mktemp(; cleanup = false) do path, io
+            try
+                JSON.print(io, cfg)
+                close(io)
+                MOOSE.MOOSE_from_config(path; quiet = quiet)
+            finally
+                isopen(io) && close(io)
+                rm(path; force = true)
+            end
         end
     else
         open(config_path, "w") do io
