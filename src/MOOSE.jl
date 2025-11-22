@@ -1,0 +1,51 @@
+module MOOSE
+
+include(joinpath("Utils", "Utils.jl"))
+include(joinpath("Utils", "UtilsPlots.jl"))
+include(joinpath("Utils", "UtilsDatabase.jl"))
+
+include(joinpath("FileIO", "Header.jl"))
+include(joinpath("FileIO", "ReadSimulation.jl"))
+include(joinpath("FileIO", "WriteDataOnDisk.jl"))
+
+include(joinpath("PhysicalParameters", "ConversionJyBeamtoK.jl"))
+include(joinpath("PhysicalParameters", "BrightnessTemperature.jl"))
+include(joinpath("PhysicalParameters", "Borientation.jl"))
+include(joinpath("PhysicalParameters", "ElectronDensity.jl"))
+include(joinpath("PhysicalParameters", "Energies.jl"))
+include(joinpath("PhysicalParameters", "IntrinsicAngle.jl"))
+include(joinpath("PhysicalParameters", "MagneticField.jl"))
+include(joinpath("PhysicalParameters", "PolarizationAngle.jl"))
+include(joinpath("PhysicalParameters", "PolarizationFraction.jl"))
+include(joinpath("PhysicalParameters", "Pressure.jl"))
+include(joinpath("PhysicalParameters", "RM.jl"))
+
+include(joinpath("Frequencies", "FreqFile.jl"))
+
+include(joinpath("Synchrotron", "EmissInterp.jl"))
+include(joinpath("Synchrotron", "Pnu.jl"))
+include(joinpath("Synchrotron", "ProcessSynchrotron.jl"))
+include(joinpath("Synchrotron", "QUnu.jl"))
+include(joinpath("Synchrotron", "Tnu.jl"))
+
+include(joinpath("Faraday", "FaradayParameters.jl"))
+include(joinpath("Faraday", "RMSynthesis.jl"))
+
+include(joinpath("Filtering", "Filter.jl"))
+
+include(joinpath("Statistics", "EffectiveWidth.jl"))
+include(joinpath("Statistics", "Moments.jl"))
+include(joinpath("Statistics", "RMS.jl"))
+include(joinpath("Statistics", "RobustSigma.jl"))
+include(joinpath("Statistics", "Statistics.jl"))
+
+include(joinpath("SyntheticObservations", "DictHeaderParameters.jl"))
+include(joinpath("SyntheticObservations", "InstrumentalParameters.jl"))
+include(joinpath("SyntheticObservations", "MOOSE.jl"))
+include(joinpath("SyntheticObservations", "MOOSE_from_config.jl"))
+
+using .MOOSEFromConfig: MOOSE_from_config
+
+export MOOSE, MOOSE_from_config
+
+end
