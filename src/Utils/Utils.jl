@@ -1,5 +1,5 @@
 """
-    max(cube::AbstractArray) -> AbstractArray
+    maxCube(cube::AbstractArray) -> AbstractArray
 
 Calculate the maximum values along the third dimension of a 3D array.
 
@@ -18,7 +18,7 @@ This function calculates the maximum values of the input 3D array `cube` along t
 cube = rand(100, 100, 50)  # Example data cube with dimensions 100x100x50
 
 # Function call
-max_values = max(cube)
+max_values = maxCube(cube)
 """
 maxCube(cube::AbstractArray) = dropdims(maximum(cube, dims=3), dims=3)
 
