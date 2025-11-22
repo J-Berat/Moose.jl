@@ -135,6 +135,11 @@ function MOOSE_from_config(config_path::AbstractString; quiet::Bool = false)
 
     start_time = now()
 
+    if ne_option == "3"
+        missing_cubes = [simu for simu in simu_paths if !isfile(joinpath(simu, "densityHp.fits"))]
+        !isempty(missing_cubes) && error("Electron density cube 'densityHp.fits' is missing for: $(join(missing_cubes, ", ")).")
+    end
+
     for (i, simu_path) in enumerate(simu_paths)
         simu_name = basename(simu_path)
         println("Processing Simulation: $(simu_name)")
@@ -171,10 +176,10 @@ function MOOSE_from_config(config_path::AbstractString; quiet::Bool = false)
     println(Crayon(foreground = :green)("Simulations processed: $(join(map(basename, simu_paths), ", "))"))
     println(Crayon(foreground = :green)("Lines of sight: $(join(chosen_LOS, ", "))"))
     println(Crayon(foreground = :green)("Output directory: $base_dir"))
-    println(Crayon(foreground = :green)("Total execution time: $(Dates.value(elapsed) ÷ 1_000) seconds"))
+    println(Crayon(foreground = :green)("Total execution time: $(format_duration(elapsed))"))
 
-    save_config(cfg, joinpath(base_dir, "moose_config.json"))
-    write_summary_log(base_dir, map(basename, simu_paths), chosen_LOS, elapsed)
+    save_config(cfg, config_path)
+    write_summary_log(base_dir, map(basename, simu_paths), chosen_LOS, elapsed; config_path=config_path, faraday=FaradayRotation, responseSynchrotron=responseSynchrotron, add_noise=add_noise, interpolation_file_path=interpolation_file_path, conversionB=conversionB, conversionn=conversionn, conversionT=conversionT, ne_option=ne_option)
 
     return nothing
 end

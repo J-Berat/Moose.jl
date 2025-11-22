@@ -150,18 +150,30 @@ This function prompts the user for input and returns the entered value as a `Flo
 value = ask_user("Enter a float value", 3.14)
 """
 function ask_user(prompt::String, default::Float64)
-    println(prompt, "(default: ",default, "): ")
-    val = readline()
-    isempty(val) ? default : parse(Float64, val)
+    while true
+        println(prompt, "(default: ", default, "): ")
+        val = strip(readline())
+        isempty(val) && return default
+
+        parsed = tryparse(Float64, val)
+        parsed === nothing && println("[Warning] Please enter a numeric value or press Enter to use the default.")
+        parsed !== nothing && return parsed
+    end
 end
 function ask_user(prompt::String, default::Int64)
-    println(prompt, "(default: ",default, "): ")
-    val = readline()
-    isempty(val) ? default : parse(Int, val)
+    while true
+        println(prompt, "(default: ", default, "): ")
+        val = strip(readline())
+        isempty(val) && return default
+
+        parsed = tryparse(Int, val)
+        parsed === nothing && println("[Warning] Please enter an integer value or press Enter to use the default.")
+        parsed !== nothing && return parsed
+    end
 end
 function ask_user(prompt::String, default::String)
-    println(prompt, "(default: ",default, "): ")
-    response = readline()
+    println(prompt, "(default: ", default, "): ")
+    response = strip(readline())
     isempty(response) ? default : response
 end
 
