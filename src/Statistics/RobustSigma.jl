@@ -31,10 +31,10 @@ function RobustSigma(Y; ZERO=false)
     N = count(!isnan, Y)
     NUMERATOR = sum((Y[Q] .- Y0).^2 .* (1.0 .- UU[Q]).^4)
     DEN1 = sum((1.0 .- UU[Q]) .* (1.0 .- 5.0 .* UU[Q]))
-    SIGGMA = N * NUMERATOR / (DEN1 * (DEN1 - 1.0))
+    SIGMA = N * NUMERATOR / (DEN1 * (DEN1 - 1.0))
 
-    if SIGGMA > 0.0
-        return sqrt(SIGGMA)
+    if SIGMA > 0.0
+        return sqrt(SIGMA)
     else
         return 0.0
     end

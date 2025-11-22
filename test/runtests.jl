@@ -1,20 +1,21 @@
 using Test
 using MOOSE
 
-@testset "CreateFreqFile" begin
-    mktempdir() do dir
-        start_freq = 100.0
-        end_freq = 200.0
-        num_freq = 10
+@testset "RMS" begin
+    x = [1.0, 2.0, 3.0]
+    @test isapprox(MOOSE.RMS(x), sqrt(2 / 3))
 
-        MOOSE.CreateFreqFile(start_freq, end_freq, num_freq, dir)
+    x2 = [1.0, 2.0]
+    y2 = [3.0, 4.0]
+    @test isapprox(MOOSE.RMS(x2, y2), sqrt(0.5))
 
-        path = joinpath(dir, "FreqHz.txt")
-        freqs = readlines(path)
+    z2 = [5.0, 6.0]
+    @test isapprox(MOOSE.RMS(x2, y2, z2), sqrt(0.75))
+end
 
-        @test length(freqs) == num_freq
-
-        parsed_freqs = parse.(Float64, freqs)
-        @test parsed_freqs[end] ≈ end_freq
-    end
+@testset "Pnu" begin
+    q = [1.0, 2.0]
+    u = [3.0, 4.0]
+    expected = sqrt.(q .^ 2 .+ u .^ 2)
+    @test MOOSE.Pnu(q, u) == expected
 end
