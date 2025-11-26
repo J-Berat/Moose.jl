@@ -56,13 +56,13 @@ Key source files live under `src/`:
 2. Load the interactive tool and launch it:
    ```julia
    using MOOSE
-   MOOSE()
+   run_moose()
    ```
 3. Follow the prompts to choose simulations, set unit conversions, select lines of sight, and enable options such as Faraday rotation or filtering. Defaults are provided for each prompt, and previous answers are reused when `moose_config.json` is present.
 
 ### Tips
 - The emissivity interpolation file defaults to `Synchrotron/emissivity.dat` under your home directory; provide a different path when prompted if needed.
-- Use the `help=true` keyword (`MOOSE(help=true)`) to print a detailed description of available options without running the pipeline.
+- Use the `help=true` keyword (`run_moose(help=true)`) to print a detailed description of available options without running the pipeline.
 
 ### Python front-end
 Prefer Python tooling? Use the lightweight wrapper in `python/moose_frontend.py`, which forwards familiar CLI flags to the Julia entrypoint:
@@ -74,8 +74,8 @@ python python/moose_frontend.py --simu /data/simulation --los z --quiet
 The wrapper accepts the same options documented for `src/MOOSE_cli.jl` (for example, `--conversionB`, `--filtering`, `--ne-option`, and positional or `--config` paths). The `--julia-binary` flag lets you point to a non-default Julia executable when needed.
 
 ### How to confirm things work
-- **Smoke test the installation:** run `julia --project -e 'using MOOSE; MOOSE(help=true)'`. This precompiles the package and prints the built-in help without needing any data files.
-- **Interactive end-to-end run:** follow the standard `MOOSE()` workflow described above with a real simulation directory. Success is indicated by FITS outputs next to your simulation files and a `MOOSE_summary.log` entry summarizing the run.
+- **Smoke test the installation:** run `julia --project -e 'using MOOSE; run_moose(help=true)'`. This precompiles the package and prints the built-in help without needing any data files.
+- **Interactive end-to-end run:** follow the standard `run_moose()` workflow described above with a real simulation directory. Success is indicated by FITS outputs next to your simulation files and a `MOOSE_summary.log` entry summarizing the run.
 - **Config-driven batch run:** prepare a JSON config (for example by saving answers from a previous interactive session) and run `julia --project src/MOOSE_cli.jl /path/to/config.json --quiet`. This reuses stored parameters and will append to `MOOSE_summary.log` on completion.
 
 ---
