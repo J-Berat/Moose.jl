@@ -64,6 +64,15 @@ Key source files live under `src/`:
 - The emissivity interpolation file defaults to `Synchrotron/emissivity.dat` under your home directory; provide a different path when prompted if needed.
 - Use the `help=true` keyword (`MOOSE(help=true)`) to print a detailed description of available options without running the pipeline.
 
+### Python front-end
+Prefer Python tooling? Use the lightweight wrapper in `python/moose_frontend.py`, which forwards familiar CLI flags to the Julia entrypoint:
+
+```bash
+python python/moose_frontend.py --simu /data/simulation --los z --quiet
+```
+
+The wrapper accepts the same options documented for `src/MOOSE_cli.jl` (for example, `--conversionB`, `--filtering`, `--ne-option`, and positional or `--config` paths). The `--julia-binary` flag lets you point to a non-default Julia executable when needed.
+
 ### How to confirm things work
 - **Smoke test the installation:** run `julia --project -e 'using MOOSE; MOOSE(help=true)'`. This precompiles the package and prints the built-in help without needing any data files.
 - **Interactive end-to-end run:** follow the standard `MOOSE()` workflow described above with a real simulation directory. Success is indicated by FITS outputs next to your simulation files and a `MOOSE_summary.log` entry summarizing the run.
