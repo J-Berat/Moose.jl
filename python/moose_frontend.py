@@ -10,10 +10,13 @@ to memorize the Julia command invocation.
 from __future__ import annotations
 
 import argparse
+import json
+import shutil
 import subprocess
 import sys
+from datetime import datetime
 from pathlib import Path
-from typing import List
+from typing import Iterable, List
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 JULIA_ENTRYPOINT = REPO_ROOT / "src" / "MOOSE_cli.jl"
@@ -23,10 +26,16 @@ class JuliaInvocationError(RuntimeError):
     """Raised when the Julia subprocess returns a non-zero exit code."""
 
 
-def build_julia_args(parsed: argparse.Namespace) -> List[str]:
+def resolve_config_path(parsed: argparse.Namespace) -> Path | None:
+    """Return the selected config path, favoring the positional argument."""
+
+    config_value = parsed.config or parsed.config_path
+    return Path(config_value) if config_value else None
+
+
+def build_julia_args(parsed: argparse.Namespace, config_path: Path | None) -> List[str]:
     args: List[str] = []
 
-    config_path = parsed.config or parsed.config_path
     if config_path:
         args.append(str(Path(config_path)))
 
@@ -84,15 +93,79 @@ def build_julia_args(parsed: argparse.Namespace) -> List[str]:
     return args
 
 
+def validate_args(parser: argparse.ArgumentParser, parsed: argparse.Namespace) -> Path | None:
+    """Validate CLI arguments and return the resolved config path."""
+
+    if parsed.config and parsed.config_path:
+        parser.error("Provide either a positional config path or --config, not both.")
+
+    config_path = resolve_config_path(parsed)
+    if config_path and not config_path.exists():
+        parser.error(f"Config file not found: {config_path}")
+
+    if parsed.filtering and parsed.filtering.upper() == "Y" and parsed.kernel_size is None:
+        parser.error("--kernel-size is required when enabling filtering.")
+
+    if parsed.noise and parsed.noise.upper() == "Y" and parsed.snr is None:
+        parser.error("--snr is required when enabling noise injection.")
+
+    if parsed.faraday and parsed.faraday.upper() == "Y":
+        missing_faraday = [
+            flag
+            for flag, value in {
+                "--phimin": parsed.phimin,
+                "--phimax": parsed.phimax,
+                "--dphi": parsed.dphi,
+            }.items()
+            if value is None
+        ]
+        if missing_faraday:
+            parser.error(
+                "Faraday rotation enabled; please provide values for "
+                + ", ".join(missing_faraday)
+            )
+
+    return config_path
+
+
+def _log_invocation(log_file: Path, command: Iterable[str], status: int, message: str | None) -> None:
+    """Append a JSON log entry describing the invocation outcome."""
+
+    log_file.parent.mkdir(parents=True, exist_ok=True)
+    entry = {
+        "timestamp": datetime.utcnow().isoformat() + "Z",
+        "command": list(command),
+        "status": status,
+        "message": message,
+    }
+    with log_file.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(entry))
+        handle.write("\n")
+
+
 def run_julia_frontend(parsed: argparse.Namespace) -> None:
+    config_path = resolve_config_path(parsed)
     cmd = [parsed.julia_binary, "--project", str(JULIA_ENTRYPOINT)]
-    cmd.extend(build_julia_args(parsed))
+    cmd.extend(build_julia_args(parsed, config_path))
+
+    julia_path = shutil.which(parsed.julia_binary)
+    if julia_path is None:
+        raise FileNotFoundError(parsed.julia_binary)
 
     process = subprocess.run(cmd, cwd=REPO_ROOT)
+
+    failure_message = None
     if process.returncode != 0:
-        raise JuliaInvocationError(
-            f"Julia front-end exited with status {process.returncode}."
+        failure_message = (
+            "Julia front-end exited with status "
+            f"{process.returncode}. Command: {' '.join(cmd)}"
         )
+
+    if parsed.log_file:
+        _log_invocation(Path(parsed.log_file), cmd, process.returncode, failure_message)
+
+    if failure_message:
+        raise JuliaInvocationError(failure_message)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -168,6 +241,10 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["1", "2", "3"],
         help="Electron density prescription option (1, 2, or 3).",
     )
+    parser.add_argument(
+        "--log-file",
+        help="Optional path to write a JSONL log entry for each invocation.",
+    )
 
     return parser
 
@@ -175,6 +252,7 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> None:
     parser = build_parser()
     parsed = parser.parse_args(argv)
+    validate_args(parser, parsed)
     run_julia_frontend(parsed)
 
 
