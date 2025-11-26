@@ -19,7 +19,7 @@ KernelDensity = "5ab0869b-81aa-558d-bb23-cbf5423bbe9b"
 QuadGK = "1fd47b50-473d-5c70-9696-f719f8f3bcdc"
 SpecialFunctions = "276daf66-3868-5448-9aa4-cd146d93841b"
 StatsBase = "2913bbd2-a68a-5b6a-aede-80deafcc1d23"
-StringEncodings = "69024149-9ee7-55f6-a4c4-859efe5993c5"
+StringEncodings = "69024149-9ee7-55f6-a4c4-859efe599b68"
 
 [extras]
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
