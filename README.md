@@ -69,6 +69,16 @@ Key source files live under `src/`:
 
 ---
 
+## Recommendations
+- **Start with the smoke test** before pointing to simulation data so you know the environment is healthy and dependencies are precompiled.
+- **Keep `moose_config.json` under version control** (or copy it alongside each dataset) to reuse validated parameter choices and document the provenance of your outputs.
+- **Name FITS files exactly as expected** (`Bx.fits`, `By.fits`, `Bz.fits`, `density.fits`, `temperature.fits`, `densityHp.fits`) to avoid interactive prompts failing on missing inputs.
+- **Record the `MOOSE_summary.log` and generated FITS products together** so downstream analysis can reference both the data and the processing history.
+- **Use the CLI for repeatable runs** (`julia --project src/MOOSE_cli.jl <config>.json`) and reserve the interactive session for initial exploration or parameter tuning.
+- **Run on datasets stored locally** when possible; large FITS cubes streamed over networked filesystems can slow down interpolation and Faraday synthesis steps.
+
+---
+
 ## Input data requirements
 MOOSE expects simulation outputs in a directory containing the following FITS cubes with these exact filenames:
 - `Bx.fits`, `By.fits`, `Bz.fits`: magnetic field components (µG recommended).
