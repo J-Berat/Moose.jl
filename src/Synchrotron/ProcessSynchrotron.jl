@@ -1,3 +1,4 @@
+using DataFrames
 function ProcessSynchrotron(simu::String, LOS, FaradayRotation::String, responseSynchrotron::String, 
                        df::DataFrame, add_noise, Noise_nu, kernel_size_synchrotron, zeta::Float64, Geff::Float64, 
                        omegaPAH::Float64, XC::Float64, nuArray::AbstractArray, PhiArray, 
