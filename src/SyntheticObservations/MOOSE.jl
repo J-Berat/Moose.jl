@@ -67,9 +67,6 @@ Enter the lines of sight you want to process, separated by commas (e.g., x,y): x
 """
 
 
-using Printf
-
-
 function print_logo()
    cols = displaysize(stdout)[2]
    rainbow = [:red, :yellow, :green, :cyan, :blue, :magenta]
@@ -158,7 +155,11 @@ function format_duration(elapsed)
     minutes = (total_ms % 3_600_000) ÷ 60_000
     seconds = (total_ms % 60_000) ÷ 1_000
     milliseconds = total_ms % 1_000
-    return @sprintf("%02d:%02d:%02d.%03d", hours, minutes, seconds, milliseconds)
+    padded_hours = lpad(hours, 2, "0")
+    padded_minutes = lpad(minutes, 2, "0")
+    padded_seconds = lpad(seconds, 2, "0")
+    padded_ms = lpad(milliseconds, 3, "0")
+    return string(padded_hours, ":", padded_minutes, ":", padded_seconds, ".", padded_ms)
 end
 
 function write_summary_log(base_dir, chosen_simu, chosen_LOS, elapsed; config_path="moose_config.json", faraday="N", responseSynchrotron="N", add_noise="N", interpolation_file_path=nothing, conversionB=nothing, conversionn=nothing, conversionT=nothing, ne_option=nothing)
