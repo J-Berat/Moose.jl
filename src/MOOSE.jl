@@ -1,9 +1,11 @@
 module MOOSE
 
-include(joinpath("Utils", "Utils.jl"))
+include(joinpath("Utils", "ArrayMath.jl"))
+include(joinpath("Utils", "Prompts.jl"))
+include(joinpath("Utils", "Progress.jl"))
 include(joinpath("Utils", "UtilsPlots.jl"))
-include(joinpath("Utils", "UtilsDatabase.jl"))
 
+include(joinpath("FileIO", "FITSUtils.jl"))
 include(joinpath("FileIO", "Header.jl"))
 include(joinpath("FileIO", "ReadSimulation.jl"))
 include(joinpath("FileIO", "WriteDataOnDisk.jl"))
@@ -39,6 +41,7 @@ include(joinpath("Statistics", "RMS.jl"))
 include(joinpath("Statistics", "RobustSigma.jl"))
 include(joinpath("Statistics", "Statistics.jl"))
 
+include(joinpath("SyntheticObservations", "SimulationDiscovery.jl"))
 include(joinpath("SyntheticObservations", "DictHeaderParameters.jl"))
 include(joinpath("SyntheticObservations", "InstrumentalParameters.jl"))
 include(joinpath("SyntheticObservations", "MOOSE.jl"))
