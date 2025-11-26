@@ -3,7 +3,6 @@ module MOOSE
 include(joinpath("Utils", "ArrayMath.jl"))
 include(joinpath("Utils", "Prompts.jl"))
 include(joinpath("Utils", "Progress.jl"))
-include(joinpath("Utils", "UtilsPlots.jl"))
 
 include(joinpath("FileIO", "FITSUtils.jl"))
 include(joinpath("FileIO", "Header.jl"))
