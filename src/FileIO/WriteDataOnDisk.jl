@@ -21,22 +21,34 @@ DataName = "ExampleData"
 specarray = [1.0, 2.0, 3.0]  # Example spectral array
 
 WriteData3D(resultspath, data, DataName, specarray)
+```
 """
 function WriteData3D(resultspath::String, data::AbstractArray, DataName::String, specarray::AbstractArray)
-    
+
     # Path
     mkpath(resultspath)
 
+    params = header_params(
+        naxis=DictHeader[DataName]["naxis"],
+        ctype1=DictHeader[DataName]["ctype1"],
+        ctype2=DictHeader[DataName]["ctype2"],
+        ctype3=DictHeader[DataName]["ctype3"],
+        cunit1=DictHeader[DataName]["cunit1"],
+        cunit2=DictHeader[DataName]["cunit2"],
+        cunit3=DictHeader[DataName]["cunit3"],
+        bunit=DictHeader[DataName]["bunit"],
+    )
+
     header = buildHeader3D(
-        DictHeader[DataName]["naxis"],
+        params["naxis"],
         size(data),
-        DictHeader[DataName]["ctype1"],
-        DictHeader[DataName]["ctype2"],
-        DictHeader[DataName]["ctype3"],
-        DictHeader[DataName]["cunit1"],
-        DictHeader[DataName]["cunit2"],
-        DictHeader[DataName]["cunit3"],
-        DictHeader[DataName]["bunit"],
+        params["ctype1"],
+        params["ctype2"],
+        params["ctype3"],
+        params["cunit1"],
+        params["cunit2"],
+        params["cunit3"],
+        params["bunit"],
         specarray
     )
 
@@ -46,7 +58,7 @@ function WriteData3D(resultspath::String, data::AbstractArray, DataName::String,
     end
 
     println("The FITS file of $DataName has been written in this directory: $fits_path")
-end    
+end
 
 """
     WriteData2D(resultspath::String, data::AbstractArray, DataName::String)
@@ -69,20 +81,30 @@ data = rand(100, 100)  # Example 2D data array
 DataName = "ExampleData"
 
 WriteData2D(resultspath, data, DataName)
+```
 """
 function WriteData2D(resultspath::String, data::AbstractArray, DataName::String)
-    
+
     # Path
     mkpath(resultspath)
 
+    params = header_params(
+        naxis=DictHeader[DataName]["naxis"],
+        ctype1=DictHeader[DataName]["ctype1"],
+        ctype2=DictHeader[DataName]["ctype2"],
+        cunit1=DictHeader[DataName]["cunit1"],
+        cunit2=DictHeader[DataName]["cunit2"],
+        bunit=DictHeader[DataName]["bunit"],
+    )
+
     header = buildHeader2D(
-        DictHeader[DataName]["naxis"],
+        params["naxis"],
         size(data),
-        DictHeader[DataName]["ctype1"],
-        DictHeader[DataName]["ctype2"],
-        DictHeader[DataName]["cunit1"],
-        DictHeader[DataName]["cunit2"],
-        DictHeader[DataName]["bunit"],
+        params["ctype1"],
+        params["ctype2"],
+        params["cunit1"],
+        params["cunit2"],
+        params["bunit"],
     )
 
     fits_path = joinpath(resultspath, "$DataName.fits")
@@ -91,5 +113,5 @@ function WriteData2D(resultspath::String, data::AbstractArray, DataName::String)
     end
 
     println("The FITS file of $DataName has been written in this directory: $fits_path")
-    
+
 end
