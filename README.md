@@ -42,6 +42,8 @@ Key source files live under `src/`:
    julia --startup-file=no --project -e 'using Pkg; Pkg.instantiate()'
    ```
 
+   This project does not track a `Manifest.toml` so that dependencies can resolve to platform-appropriate versions. Running `Pkg.instantiate()` will generate a local manifest for your machine.
+
 > **Note:** Some containerized or CI environments (including the one used for automated linting here) do not ship with Julia by default. In those cases, install Julia first or run commands on a machine where Julia is available before attempting to instantiate or test the project.
 
 ---
