@@ -37,9 +37,9 @@ Key source files live under `src/`:
 
 ## Installation
 1. Install **Julia 1.10+** from [julialang.org](https://julialang.org/downloads/).
-2. From the repository root, instantiate the environment to install dependencies:
+2. From the repository root, instantiate the environment to install dependencies. If you keep a personal `~/.julia/config/startup.jl`, disable it so it does not pull in packages (e.g. `JSON`) that are not part of this project:
    ```bash
-   julia --project -e 'using Pkg; Pkg.instantiate()'
+   julia --startup-file=no --project -e 'using Pkg; Pkg.instantiate()'
    ```
 
 > **Note:** Some containerized or CI environments (including the one used for automated linting here) do not ship with Julia by default. In those cases, install Julia first or run commands on a machine where Julia is available before attempting to instantiate or test the project.
@@ -47,9 +47,9 @@ Key source files live under `src/`:
 ---
 
 ## Usage
-1. Start Julia with the project activated:
+1. Start Julia with the project activated (again disabling any personal startup file if it imports extra packages):
    ```bash
-   julia --project
+   julia --startup-file=no --project
    ```
 2. Load the interactive tool and launch it:
    ```julia

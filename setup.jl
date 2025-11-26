@@ -6,9 +6,9 @@ Simple helper to prepare the MOOSE environment. It activates the project in
 this repository, installs dependencies, and precompiles the code. Pass
 `--test` to also run the package tests after setup.
 
-Usage examples:
-  julia setup.jl
-  julia setup.jl --test
+Usage examples (disable personal startup files that import extra packages):
+  julia --startup-file=no setup.jl
+  julia --startup-file=no setup.jl --test
 """
 
 using Pkg
