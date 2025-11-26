@@ -1,5 +1,5 @@
 """
-    MOOSE()
+    run_moose()
 
 Interactive tool to process synchrotron data for a set of simulations.
 
@@ -55,8 +55,8 @@ The function outputs the following computed data:
 
 # Example
 ```julia
-# To run the MOOSE function, simply call it:
-MOOSE()
+# To run the interactive workflow, simply call:
+run_moose()
 
 # Sample interaction
 Enter the base directory for simulations: /path/to/simulations
@@ -189,13 +189,13 @@ function write_summary_log(base_dir, chosen_simu, chosen_LOS, elapsed; config_pa
 end
 
 
-function MOOSE(; quiet::Bool = false, reset_config::Bool = true, help::Bool = false)
+function run_moose(; quiet::Bool = false, reset_config::Bool = true, help::Bool = false)
    if help
        println("""
 MOOSE v1.0 — Mock Observation Of Synchrotron Emission
 
 Usage:
- MOOSE(; quiet=false, reset_config=true, help=false)
+ run_moose(; quiet=false, reset_config=true, help=false)
 
 Options:
  --quiet             Disable the rainbow logo at startup.

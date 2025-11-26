@@ -47,6 +47,6 @@ include(joinpath("SyntheticObservations", "MOOSE_from_config.jl"))
 
 using .MOOSEFromConfig: MOOSE_from_config
 
-export MOOSE, MOOSE_from_config
+export run_moose, MOOSE_from_config
 
 end
