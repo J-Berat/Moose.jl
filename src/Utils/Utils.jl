@@ -566,8 +566,3 @@ function calculate_anglecos(Ax, Ay, Az, Bx, By, Bz)
     
     return cos_theta, theta
 end
-
-function logindgen(nb, minv, maxv)
-    # Generate logarithmically spaced values between minv and maxv
-    10 .^ range(log10(minv), log10(maxv), length=nb)
-end
