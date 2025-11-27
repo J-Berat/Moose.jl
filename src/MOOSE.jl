@@ -36,7 +36,6 @@ include(joinpath("Filtering", "Filter.jl"))
 include(joinpath("Statistics", "EffectiveWidth.jl"))
 include(joinpath("Statistics", "Moments.jl"))
 include(joinpath("Statistics", "RMS.jl"))
-include(joinpath("Statistics", "RobustSigma.jl"))
 include(joinpath("Statistics", "Statistics.jl"))
 
 include(joinpath("SyntheticObservations", "SimulationDiscovery.jl"))
