@@ -1,5 +1,16 @@
 module MOOSE
 
+using Crayons
+using Dates
+using JSON
+using CSV
+using DataFrames
+using FITSIO
+using StatsBase
+using Interpolations
+using Dierckx
+using FFTW
+
 include(joinpath("Utils", "ArrayMath.jl"))
 include(joinpath("Utils", "Prompts.jl"))
 include(joinpath("Utils", "Progress.jl"))
@@ -19,6 +30,7 @@ include(joinpath("PhysicalParameters", "PolarizationAngle.jl"))
 include(joinpath("PhysicalParameters", "PolarizationFraction.jl"))
 include(joinpath("PhysicalParameters", "Pressure.jl"))
 include(joinpath("PhysicalParameters", "RM.jl"))
+include(joinpath("PhysicalParameters", "Constants.jl"))
 
 include(joinpath("Frequencies", "FreqFile.jl"))
 
@@ -36,6 +48,7 @@ include(joinpath("Filtering", "Filter.jl"))
 include(joinpath("Statistics", "EffectiveWidth.jl"))
 include(joinpath("Statistics", "Moments.jl"))
 include(joinpath("Statistics", "RMS.jl"))
+include(joinpath("Statistics", "RobustSigma.jl"))
 include(joinpath("Statistics", "Statistics.jl"))
 
 include(joinpath("SyntheticObservations", "SimulationDiscovery.jl"))
