@@ -1,9 +1,3 @@
-using Crayons
-using Dates
-using JSON
-using CSV
-using DataFrames
-
 """
     run_moose()
 
@@ -70,6 +64,7 @@ Do you want to process all simulations or choose specific ones? (Enter 'all' or 
 Enter the indices of the simulations you want to process, separated by commas (e.g., 1,3,5): 1,2
 Do you want to include Faraday rotation in the computation of Q and U? (Y/N): Y
 Enter the lines of sight you want to process, separated by commas (e.g., x,y): x,z
+```
 """
 
 
