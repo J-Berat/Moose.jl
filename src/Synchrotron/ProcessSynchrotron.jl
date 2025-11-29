@@ -1,10 +1,9 @@
 using DataFrames
-function ProcessSynchrotron(simu::String, LOS, FaradayRotation::String, responseSynchrotron::String, 
-                       df::DataFrame, add_noise, Noise_nu, kernel_size_synchrotron, zeta::Float64, Geff::Float64, 
-                       omegaPAH::Float64, XC::Float64, nuArray::AbstractArray, PhiArray, 
-                       PixelLength_pc::Float64, PixelLength_cm::Float64, BoxLength_pc, 
+function ProcessSynchrotron(simu::AbstractString, LOS, FaradayRotation::AbstractString, responseSynchrotron::AbstractString,
+                       df::DataFrame, add_noise, Noise_nu, kernel_size_synchrotron, zeta::Float64, Geff::Float64,
+                       omegaPAH::Float64, XC::Float64, nuArray::AbstractArray, PhiArray,
+                       PixelLength_pc::Float64, PixelLength_cm::Float64, BoxLength_pc,
                        DistanceArray::AbstractArray, conversionn, conversionT, conversionB)
-
     #default_path = joinpath(simu, LOS, "Synchrotron")
     #resultspath = ask_user("Where do you want to save your files?", default_path)
     #mkpath(resultspath) 
