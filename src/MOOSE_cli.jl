@@ -129,7 +129,7 @@ function run_with_config(config_path, quiet, overrides)
     if config_path === nothing
         mktemp(; cleanup = false) do path, io
             try
-                JSON.print(io, cfg)
+                write(io, JSON.json(cfg))
                 close(io)
                 MOOSE.MOOSE_from_config(path; quiet = quiet)
             finally
@@ -139,7 +139,7 @@ function run_with_config(config_path, quiet, overrides)
         end
     else
         open(config_path, "w") do io
-            JSON.print(io, cfg)
+            write(io, JSON.json(cfg))
         end
         MOOSE.MOOSE_from_config(config_path; quiet = quiet)
     end

@@ -146,7 +146,7 @@ end
 
 function save_config(config::Dict, config_path="moose_config.json")
    open(config_path, "w") do io
-       JSON.print(io, config)
+       write(io, JSON.json(config))
    end
 end
 
