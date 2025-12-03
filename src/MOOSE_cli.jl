@@ -33,7 +33,17 @@ function parse_cli_args(args)
         elseif arg == "--los"
             i += 1
             i > length(args) && error("--los expects x, y, or z")
-            push!(los_values, lowercase(args[i]))
+            raw_los = lowercase(args[i])
+            if raw_los == "all"
+                los_values = ["x", "y", "z"]
+            else
+                for candidate in split(raw_los, ",")
+                    los = strip(candidate)
+                    isempty(los) && continue
+                    los in ("x", "y", "z") || error("Invalid LOS '$(los)'. Use x, y, z, or 'all'.")
+                    push!(los_values, los)
+                end
+            end
         elseif arg == "--interpolation"
             i += 1
             i > length(args) && error("--interpolation expects a file path")

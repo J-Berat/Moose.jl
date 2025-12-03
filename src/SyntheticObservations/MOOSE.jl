@@ -276,11 +276,18 @@ Flow:
     isempty(simu_list) && error("No simulations containing FITS files were found in $(base_dir).")
     display_simulations(simu_list)
 
-    simu_choice = ask_user("Do you want to process all simulations or choose specific ones? (Enter 'all' or 'choose')", get(config, "simu_choice", "all"))
-    chosen_simu = if uppercase(simu_choice) == "CHOOSE"
+    simu_prompt = "Enter 'all' to process all simulations or provide comma-separated indices (e.g., 1,3,5):"
+    simu_choice = ask_user(simu_prompt, get(config, "simu_choice", "all"))
+    chosen_simu = begin
         parsed_indices = Int[]
         while true
-            raw_indices = split(ask_user("Enter the indices of the simulations you want to process, separated by commas (e.g., 1,3,5): ", get(config, "simu_indices", "")), ",")
+            if uppercase(strip(simu_choice)) == "ALL"
+                empty!(parsed_indices)
+                append!(parsed_indices, 1:length(simu_list))
+                break
+            end
+
+            raw_indices = split(simu_choice, ",")
             empty!(parsed_indices)
             for raw_idx in raw_indices
                 candidate = strip(raw_idx)
@@ -294,13 +301,18 @@ Flow:
                     push!(parsed_indices, parsed)
                 end
             end
-            !isempty(parsed_indices) && break
-            println("[Error] No valid simulation indices provided. Use comma-separated integers like 1,3,5 and try again.")
+
+            if !isempty(parsed_indices)
+                break
+            end
+
+            println("[Error] No valid simulation indices provided. Use 'all' or comma-separated integers like 1,3,5 and try again.")
+            simu_choice = ask_user(simu_prompt, simu_choice)
         end
-        config["simu_indices"] = join(parsed_indices, ",")
+
+        config["simu_choice"] = simu_choice
+        config["simu_indices"] = uppercase(strip(simu_choice)) == "ALL" ? "" : join(parsed_indices, ",")
         map(i -> simu_list[i], parsed_indices)
-    else
-        simu_list
     end
     config["chosen_simu"] = chosen_simu
 
@@ -330,11 +342,18 @@ Flow:
     config["SNR_nu"] = SNR_nu
 
     list_LOS = ["x", "y", "z"]
-    LOS_choice = ask_user("Do you want to process all lines of sight (x, y, z), or choose specific ones? (Enter 'all' or 'choose')", get(config, "LOS_choice", "All"))
-    chosen_LOS = if uppercase(LOS_choice) == "CHOOSE"
+    los_prompt = "Enter 'all' to process all lines of sight (x, y, z) or specify comma-separated ones (e.g., x,y):"
+    los_choice = ask_user(los_prompt, get(config, "chosen_LOS_input", "all"))
+    chosen_LOS = begin
         valid_los = String[]
         while true
-            los_input = split(ask_user("Enter the lines of sight you want to process, separated by commas (e.g., x,y): ", get(config, "chosen_LOS_input", "")), ",")
+            if uppercase(strip(los_choice)) == "ALL"
+                empty!(valid_los)
+                append!(valid_los, list_LOS)
+                break
+            end
+
+            los_input = split(los_choice, ",")
             empty!(valid_los)
             for los in los_input
                 candidate = lowercase(strip(los))
@@ -345,13 +364,17 @@ Flow:
                     println("[Warning] Ignoring invalid line of sight: $(candidate). Valid options are x, y, z.")
                 end
             end
-            !isempty(valid_los) && break
-            println("[Error] No valid lines of sight provided. Please try again.")
+
+            if !isempty(valid_los)
+                break
+            end
+
+            println("[Error] No valid lines of sight provided. Use 'all' or comma-separated values like x,y and try again.")
+            los_choice = ask_user(los_prompt, los_choice)
         end
-        config["chosen_LOS_input"] = join(valid_los, ",")
+
+        config["chosen_LOS_input"] = uppercase(strip(los_choice)) == "ALL" ? "all" : join(valid_los, ",")
         valid_los
-    else
-        list_LOS
     end
     config["chosen_LOS"] = chosen_LOS
 
@@ -398,7 +421,7 @@ Flow:
         println("Processing Simulation: $(simu)")
 
         for LOS in chosen_LOS
-                println(Crayon(foreground=:yellow, bold=true)("→ Processing LOS: $(LOS)"))
+            println(Crayon(foreground=:yellow, bold=true)("→ Processing LOS: $(LOS)"))
 
             if ne_option == "1"
                 ProcessSynchrotron(simu, LOS, FaradayRotation, responseSynchrotron, df, add_noise, SNR_nu,
