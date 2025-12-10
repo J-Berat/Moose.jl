@@ -96,7 +96,7 @@ function print_logo()
         _| |_\/_| |_\  `-'  /\  `-'  /| \____) | _| |__/ |
        |_____||_____|`.___.'  `.___.'  \______.'|________|
        """
-       logo_lines = split(logo_text, "\n")
+       logo_lines = filter(line -> !isempty(strip(line)), split(logo_text, "\n"))
        max_len = maximum(length.(logo_lines))
        pad_left = max(0, (cols - max_len) ÷ 2)
        border = repeat("─", max_len)
