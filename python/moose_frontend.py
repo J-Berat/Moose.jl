@@ -100,17 +100,23 @@ def _normalize_los_values(values: List[str] | None, parser: argparse.ArgumentPar
         return []
 
     normalized: list[str] = []
+    seen: set[str] = set()
     for raw_value in values:
         parts = [value.strip().lower() for value in raw_value.split(",") if value.strip()]
         for value in parts:
             if value == "all":
-                normalized.extend(["x", "y", "z"])
+                for expanded in ("x", "y", "z"):
+                    if expanded not in seen:
+                        normalized.append(expanded)
+                        seen.add(expanded)
                 continue
 
             if value not in {"x", "y", "z"}:
                 parser.error("--los must be x, y, z, or 'all'.")
 
-            normalized.append(value)
+            if value not in seen:
+                normalized.append(value)
+                seen.add(value)
 
     return normalized
 
