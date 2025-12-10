@@ -1,14 +1,8 @@
 using Statistics
 
-const _CairoMakie_available = Base.find_package("CairoMakie") !== nothing
-if _CairoMakie_available
-    import CairoMakie
-end
+import CairoMakie
 
-function _ensure_cairomakie()
-    _CairoMakie_available && return
-    error("CairoMakie is required for plotting; install and load CairoMakie before calling this function.")
-end
+_ensure_cairomakie() = nothing
 
 """
     power_spectrum_2d(field; pixel_size = 1.0, center = true, detrend_mean = true, normalize = true)
