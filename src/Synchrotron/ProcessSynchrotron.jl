@@ -19,6 +19,8 @@ function ProcessSynchrotron(simu::AbstractString, LOS, FaradayRotation::Abstract
     SimuParameters = nothing
     
     Bperpcube = Bperp(B1, B2)
+    cube_depth = size(Bperpcube, 3)
+    PixelLength_pc, PixelLength_cm, DistanceArray = los_pixel_scale(BoxLength_pc, cube_depth)
     psi_src = IntrinsicAngle(B1, B2)
 
     # Compute electron density
@@ -150,6 +152,8 @@ function ProcessSynchrotron(simu::String, LOS, FaradayRotation::String, response
     SimuParameters = nothing
     
     Bperpcube = Bperp(B1, B2)
+    cube_depth = size(Bperpcube, 3)
+    PixelLength_pc, PixelLength_cm, DistanceArray = los_pixel_scale(BoxLength_pc, cube_depth)
     psi_src = IntrinsicAngle(B1, B2)
 
     # Compute electron density using alternative prescription
@@ -272,6 +276,8 @@ function ProcessSynchrotron(simu::String, LOS, FaradayRotation::String, response
     SimuParameters = nothing
     
     Bperpcube = Bperp(B1, B2)
+    cube_depth = size(Bperpcube, 3)
+    PixelLength_pc, PixelLength_cm, DistanceArray = los_pixel_scale(BoxLength_pc, cube_depth)
     psi_src = IntrinsicAngle(B1, B2)
 
     # Compute integral of quantities
