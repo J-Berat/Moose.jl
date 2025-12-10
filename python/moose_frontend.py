@@ -46,7 +46,7 @@ def build_julia_args(parsed: argparse.Namespace, config_path: Path | None) -> Li
         args.extend(["--simu", str(simu)])
 
     for los in parsed.los or []:
-        args.extend(["--los", los.lower()])
+        args.extend(["--los", los])
 
     if parsed.interpolation:
         args.extend(["--interpolation", str(parsed.interpolation)])
@@ -93,12 +93,35 @@ def build_julia_args(parsed: argparse.Namespace, config_path: Path | None) -> Li
     return args
 
 
+def _normalize_los_values(values: List[str] | None, parser: argparse.ArgumentParser) -> list[str]:
+    """Return a normalized list of LOS choices, mirroring the Julia CLI semantics."""
+
+    if not values:
+        return []
+
+    normalized: list[str] = []
+    for raw_value in values:
+        parts = [value.strip().lower() for value in raw_value.split(",") if value.strip()]
+        for value in parts:
+            if value == "all":
+                normalized.extend(["x", "y", "z"])
+                continue
+
+            if value not in {"x", "y", "z"}:
+                parser.error("--los must be x, y, z, or 'all'.")
+
+            normalized.append(value)
+
+    return normalized
+
+
 def validate_args(parser: argparse.ArgumentParser, parsed: argparse.Namespace) -> Path | None:
     """Validate CLI arguments and return the resolved config path."""
 
     if parsed.config and parsed.config_path:
         parser.error("Provide either a positional config path or --config, not both.")
 
+    parsed.los = _normalize_los_values(parsed.los, parser)
     config_path = resolve_config_path(parsed)
     if config_path and not config_path.exists():
         parser.error(f"Config file not found: {config_path}")
@@ -206,8 +229,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--los",
         action="append",
-        choices=["x", "y", "z", "X", "Y", "Z"],
-        help="Line of sight options; may be repeated.",
+        help=(
+            "Line of sight options; may be repeated. Accepts x, y, z, 'all', "
+            "or comma-separated combinations such as x,y,z."
+        ),
     )
     parser.add_argument(
         "--interpolation",
