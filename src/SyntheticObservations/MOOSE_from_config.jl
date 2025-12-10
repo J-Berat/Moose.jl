@@ -78,7 +78,7 @@ function build_distance_parameters(cfg)
 
     pixel_length_pc = Float64(box_length_pc) / Float64(box_length_pix)
     pixel_length_cm = pixel_length_pc * PARSEC_TO_CM
-    distance_array = range(start = 0.0, stop = Float64(box_length_pc), step = pixel_length_pc)
+    distance_array = range(start = 0.0, step = pixel_length_pc, length = Int(box_length_pix))
 
     return pixel_length_pc, pixel_length_cm, Float64(box_length_pc), distance_array
 end
