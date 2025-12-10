@@ -1,8 +1,13 @@
 using Statistics
 
-import CairoMakie
+const _cairomakie_pkgid = Base.PkgId(Base.UUID("13f3f980-e62b-5c42-98c6-ff1f3baf88f0"), "CairoMakie")
 
-_ensure_cairomakie() = nothing
+function _ensure_cairomakie()
+    pkg_path = Base.find_package(_cairomakie_pkgid.name)
+    pkg_path === nothing && error("CairoMakie is required for plotting. Install it with `Pkg.add(\"CairoMakie\")` and ensure it is available in the active environment.")
+
+    return Base.require(_cairomakie_pkgid)
+end
 
 """
     power_spectrum_2d(field; pixel_size = 1.0, center = true, detrend_mean = true, normalize = true)
@@ -121,7 +126,7 @@ function plot_power_spectrum_figure(field::AbstractMatrix; pixel_size::Real = 1.
     slope_k_range::Union{Nothing, Tuple{<:Real, <:Real}} = nothing,
     slope_color = :red, colormap = :viridis, fig_kwargs...)
 
-    _ensure_cairomakie()
+    CairoMakie = _ensure_cairomakie()
 
     kx, ky, psd2d = power_spectrum_2d(field; pixel_size = pixel_size, center = true,
         detrend_mean = detrend_mean, normalize = normalize)
