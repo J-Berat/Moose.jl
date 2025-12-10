@@ -1,5 +1,15 @@
 using Statistics
 
+const _CairoMakie_available = Base.find_package("CairoMakie") !== nothing
+if _CairoMakie_available
+    import CairoMakie
+end
+
+function _ensure_cairomakie()
+    _CairoMakie_available && return
+    error("CairoMakie is required for plotting; install and load CairoMakie before calling this function.")
+end
+
 """
     power_spectrum_2d(field; pixel_size = 1.0, center = true, detrend_mean = true, normalize = true)
 
@@ -117,7 +127,7 @@ function plot_power_spectrum_figure(field::AbstractMatrix; pixel_size::Real = 1.
     slope_k_range::Union{Nothing, Tuple{<:Real, <:Real}} = nothing,
     slope_color = :red, colormap = :viridis, fig_kwargs...)
 
-    import CairoMakie
+    _ensure_cairomakie()
 
     kx, ky, psd2d = power_spectrum_2d(field; pixel_size = pixel_size, center = true,
         detrend_mean = detrend_mean, normalize = normalize)
