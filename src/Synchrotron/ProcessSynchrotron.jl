@@ -10,8 +10,8 @@ end
 function ProcessSynchrotron(simu::AbstractString, LOS, FaradayRotation::AbstractString, responseSynchrotron::AbstractString,
                        df::DataFrame, add_noise, Noise_nu, kernel_size_synchrotron, zeta::Float64, Geff::Float64,
                        omegaPAH::Float64, XC::Float64, nuArray::AbstractArray, PhiArray,
-                       PixelLength_pc::Float64, PixelLength_cm::Float64, BoxLength_pc,
-                       DistanceArray::AbstractArray, conversionn, conversionT, conversionB)
+                       PixelLength_pc, PixelLength_cm, BoxLength_pc,
+                       DistanceArray, conversionn, conversionT, conversionB)
     #default_path = joinpath(simu, LOS, "Synchrotron")
     #resultspath = ask_user("Where do you want to save your files?", default_path)
     #mkpath(resultspath) 
@@ -146,10 +146,10 @@ function ProcessSynchrotron(simu::AbstractString, LOS, FaradayRotation::Abstract
     end
 end
 
-function ProcessSynchrotron(simu::String, LOS, FaradayRotation::String, responseSynchrotron::String, 
+function ProcessSynchrotron(simu::String, LOS, FaradayRotation::String, responseSynchrotron::String,
                        df::DataFrame, add_noise, Noise_nu, kernel_size_synchrotron, IonizationFraction::Float64,
-                       nuArray::AbstractArray, PhiArray, PixelLength_pc::Float64, PixelLength_cm::Float64, 
-                       BoxLength_pc, DistanceArray::AbstractArray, conversionn, conversionT, conversionB)
+                       nuArray::AbstractArray, PhiArray, PixelLength_pc, PixelLength_cm,
+                       BoxLength_pc, DistanceArray, conversionn, conversionT, conversionB)
     println("-------------------------------------------")
     println("Processing Synchrotron data for LOS: $LOS")
     resultspath = joinpath(simu, LOS, "Synchrotron")
@@ -270,10 +270,10 @@ function ProcessSynchrotron(simu::String, LOS, FaradayRotation::String, response
 end
 
 
-function ProcessSynchrotron(simu::String, LOS, FaradayRotation::String, responseSynchrotron::String, 
-                       df::DataFrame,  add_noise, Noise_nu, kernel_size_synchrotron, nuArray::AbstractArray, PhiArray, 
-                       PixelLength_pc::Float64, PixelLength_cm::Float64, BoxLength_pc, 
-                       DistanceArray::AbstractArray, conversionn, conversionT, conversionB)
+function ProcessSynchrotron(simu::String, LOS, FaradayRotation::String, responseSynchrotron::String,
+                       df::DataFrame,  add_noise, Noise_nu, kernel_size_synchrotron, nuArray::AbstractArray, PhiArray,
+                       PixelLength_pc, PixelLength_cm, BoxLength_pc,
+                       DistanceArray, conversionn, conversionT, conversionB)
 
     println("-------------------------------------------")
     println("Processing Synchrotron data for LOS: $LOS")

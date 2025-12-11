@@ -66,21 +66,42 @@ function build_faraday(cfg)
     end
 end
 
-function build_distance_parameters(cfg)
-    box_cfg = get(cfg, "box", nothing)
-    if box_cfg isa AbstractDict
-        box_length_pc = get(box_cfg, "size_pc", 50.0)
-        box_length_pix = get(box_cfg, "npix", 256)
+function normalize_box_lengths(box_length)
+    if box_length isa AbstractVector
+        length(box_length) == 3 || error("Box length array must have three elements (x, y, z).")
+        return (; x = Float64(box_length[1]), y = Float64(box_length[2]), z = Float64(box_length[3]))
+    elseif box_length isa AbstractDict
+        return (; x = Float64(get(box_length, "x", get(box_length, "X", get(box_length, "size_pc", 50.0)))),
+                 y = Float64(get(box_length, "y", get(box_length, "Y", get(box_length, "size_pc", 50.0)))),
+                 z = Float64(get(box_length, "z", get(box_length, "Z", get(box_length, "size_pc", 50.0)))))
     else
-        box_length_pc = get(cfg, "BoxLength_pc", 50.0)
-        box_length_pix = get(cfg, "BoxLength_pix", 256)
+        return (; x = Float64(box_length), y = Float64(box_length), z = Float64(box_length))
     end
+end
 
     pixel_length_pc = Float64(box_length_pc) / Float64(box_length_pix)
     pixel_length_cm = pixel_length_pc * PARSEC_TO_CM
     distance_array = range(start = 0.0, step = pixel_length_pc, length = Int(box_length_pix))
 
-    return pixel_length_pc, pixel_length_cm, Float64(box_length_pc), distance_array
+function build_distance_parameters(cfg)
+    box_cfg = get(cfg, "box", nothing)
+    raw_box_length_pc = box_cfg isa AbstractDict ? get(box_cfg, "size_pc", get(cfg, "BoxLength_pc", 50.0)) : get(cfg, "BoxLength_pc", 50.0)
+    raw_box_length_pix = box_cfg isa AbstractDict ? get(box_cfg, "npix", get(cfg, "BoxLength_pix", 256)) : get(cfg, "BoxLength_pix", 256)
+
+    box_length_pc = normalize_box_lengths(raw_box_length_pc)
+    box_length_pix = normalize_box_pixels(raw_box_length_pix)
+
+    pixel_length_pc = (; x = box_length_pc.x / box_length_pix.x,
+                        y = box_length_pc.y / box_length_pix.y,
+                        z = box_length_pc.z / box_length_pix.z)
+    pixel_length_cm = (; x = pixel_length_pc.x * PARSEC_TO_CM,
+                        y = pixel_length_pc.y * PARSEC_TO_CM,
+                        z = pixel_length_pc.z * PARSEC_TO_CM)
+    distance_array = (; x = range(start = 0.0, stop = box_length_pc.x, step = pixel_length_pc.x),
+                      y = range(start = 0.0, stop = box_length_pc.y, step = pixel_length_pc.y),
+                      z = range(start = 0.0, stop = box_length_pc.z, step = pixel_length_pc.z))
+
+    return pixel_length_pc, pixel_length_cm, box_length_pc, distance_array
 end
 
 """
