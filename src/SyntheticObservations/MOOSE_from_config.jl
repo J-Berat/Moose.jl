@@ -6,10 +6,8 @@ using DataFrames
 using Dates
 using JSON
 
-include("MOOSE.jl")
-using ..MOOSE: WolfireConstants, ProcessSynchrotron, print_logo, save_config, write_summary_log
-
-const PARSEC_TO_CM = 3.0857e18
+using ..MOOSE: PARSEC_TO_CM, WolfireConstants, ProcessSynchrotron, format_duration,
+                print_logo, save_config, write_summary_log
 
 function normalize_base_dir(cfg, config_path)
     base_dir = get(cfg, "base_dir") do
