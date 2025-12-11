@@ -79,19 +79,9 @@ function normalize_box_lengths(box_length)
     end
 end
 
-function normalize_box_pixels(box_pixels)
-    if box_pixels isa AbstractVector
-        length(box_pixels) == 3 || error("Box pixel array must have three elements (x, y, z).")
-        return (; x = Int(box_pixels[1]), y = Int(box_pixels[2]), z = Int(box_pixels[3]))
-    elseif box_pixels isa AbstractDict
-        return (; x = Int(get(box_pixels, "x", get(box_pixels, "X", get(box_pixels, "npix", 256)))),
-                 y = Int(get(box_pixels, "y", get(box_pixels, "Y", get(box_pixels, "npix", 256)))),
-                 z = Int(get(box_pixels, "z", get(box_pixels, "Z", get(box_pixels, "npix", 256)))))
-    else
-        pixels = Int(box_pixels)
-        return (; x = pixels, y = pixels, z = pixels)
-    end
-end
+    pixel_length_pc = Float64(box_length_pc) / Float64(box_length_pix)
+    pixel_length_cm = pixel_length_pc * PARSEC_TO_CM
+    distance_array = range(start = 0.0, step = pixel_length_pc, length = Int(box_length_pix))
 
 function build_distance_parameters(cfg)
     box_cfg = get(cfg, "box", nothing)
