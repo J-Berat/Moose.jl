@@ -1,19 +1,8 @@
 using DataFrames
 
-function los_box_length(box_length_pc, LOS)
-    if box_length_pc isa NamedTuple
-        return getproperty(box_length_pc, Symbol(lowercase(String(LOS))))
-    elseif box_length_pc isa AbstractDict
-        return box_length_pc[String(LOS)]
-    else
-        return Float64(box_length_pc)
-    end
-end
-
-function compute_los_spacing(box_length_pc, depth, LOS)
+function compute_los_spacing(box_length_pc, depth)
     depth > 0 || error("Cannot compute line-of-sight spacing for an empty cube.")
-    los_length_pc = los_box_length(box_length_pc, LOS)
-    los_pixel_length_pc = los_length_pc / depth
+    los_pixel_length_pc = Float64(box_length_pc) / depth
     los_pixel_length_cm = los_pixel_length_pc * PARSEC_TO_CM
     los_distance_array = range(start=0.0, step=los_pixel_length_pc, length=depth)
     return los_pixel_length_pc, los_pixel_length_cm, los_distance_array
@@ -37,9 +26,11 @@ function ProcessSynchrotron(simu::AbstractString, LOS, FaradayRotation::Abstract
     T, n = SimuParameters[4], SimuParameters[5]
     SimuParameters = nothing
 
-    los_pixel_length_pc, los_pixel_length_cm, los_distance_array = compute_los_spacing(BoxLength_pc, size(B1, 3), LOS)
+    los_pixel_length_pc, los_pixel_length_cm, los_distance_array = compute_los_spacing(BoxLength_pc, size(B1, 3))
 
     Bperpcube = Bperp(B1, B2)
+    cube_depth = size(Bperpcube, 3)
+    PixelLength_pc, PixelLength_cm, DistanceArray = los_pixel_scale(BoxLength_pc, cube_depth)
     psi_src = IntrinsicAngle(B1, B2)
 
     # Compute electron density
@@ -170,9 +161,11 @@ function ProcessSynchrotron(simu::String, LOS, FaradayRotation::String, response
     T, n = SimuParameters[4], SimuParameters[5]
     SimuParameters = nothing
 
-    los_pixel_length_pc, los_pixel_length_cm, los_distance_array = compute_los_spacing(BoxLength_pc, size(B1, 3), LOS)
+    los_pixel_length_pc, los_pixel_length_cm, los_distance_array = compute_los_spacing(BoxLength_pc, size(B1, 3))
 
     Bperpcube = Bperp(B1, B2)
+    cube_depth = size(Bperpcube, 3)
+    PixelLength_pc, PixelLength_cm, DistanceArray = los_pixel_scale(BoxLength_pc, cube_depth)
     psi_src = IntrinsicAngle(B1, B2)
 
     # Compute electron density using alternative prescription
@@ -294,9 +287,11 @@ function ProcessSynchrotron(simu::String, LOS, FaradayRotation::String, response
     nHp = SimuParameters[7]
     SimuParameters = nothing
 
-    los_pixel_length_pc, los_pixel_length_cm, los_distance_array = compute_los_spacing(BoxLength_pc, size(B1, 3), LOS)
+    los_pixel_length_pc, los_pixel_length_cm, los_distance_array = compute_los_spacing(BoxLength_pc, size(B1, 3))
 
     Bperpcube = Bperp(B1, B2)
+    cube_depth = size(Bperpcube, 3)
+    PixelLength_pc, PixelLength_cm, DistanceArray = los_pixel_scale(BoxLength_pc, cube_depth)
     psi_src = IntrinsicAngle(B1, B2)
 
     # Compute integral of quantities

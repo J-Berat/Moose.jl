@@ -26,8 +26,17 @@ function ask_user(prompt::String, default::Int64)
     end
 end
 
-function ask_user(prompt::String, default::String)
-    println(prompt, "(default: ", default, "): ")
-    response = strip(readline())
-    isempty(response) ? default : response
+function ask_user(
+    prompt::String,
+    default::AbstractString;
+    validate::Function = _ -> true,
+    error_message::AbstractString = "[Warning] Invalid input. Please try again.",
+)
+    while true
+        println(prompt, "(default: ", default, "): ")
+        response = String(strip(readline()))
+        isempty(response) && (response = String(default))
+        validate(response) && return response
+        !isempty(error_message) && println(error_message)
+    end
 end

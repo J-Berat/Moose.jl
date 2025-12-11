@@ -1,24 +1,13 @@
 """
-    RMS(X)
-    RMS(X, Y)
-    RMS(X, Y, Z)
+    RMS(first::AbstractArray, others::AbstractArray...)
 
-Compute the root-mean-square of one, two, or three arrays after centering
-each input around its mean. All inputs are flattened so that the statistic
-is independent of array shape.
+Compute the root-mean-square of one or more arrays after centering each
+input around its mean. All inputs are flattened so that the statistic is
+independent of array shape.
 """
-function RMS(X)
-    x = vec(X)
-    return sqrt(mean((x .- mean(x)).^2))
+function RMS(first::AbstractArray, others::AbstractArray...)
+    centered_squares = ((vec(A) .- mean(vec(A))).^2 for A in (first, others...))
+    total = reduce(+, centered_squares)
+    return sqrt(mean(total))
 end
 
-function RMS(X, Y)
-    squares = (vec(X) .- mean(vec(X))).^2 .+ (vec(Y) .- mean(vec(Y))).^2
-    return sqrt(mean(squares))
-end
-
-function RMS(X, Y, Z)
-    squares = (vec(X) .- mean(vec(X))).^2 .+ (vec(Y) .- mean(vec(Y))).^2 .+
-              (vec(Z) .- mean(vec(Z))).^2
-    return sqrt(mean(squares))
-end
