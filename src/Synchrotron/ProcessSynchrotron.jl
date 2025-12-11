@@ -27,11 +27,15 @@ function ProcessSynchrotron(simu::AbstractString, LOS, FaradayRotation::Abstract
     SimuParameters = nothing
 
     los_pixel_length_pc, los_pixel_length_cm, los_distance_array = compute_los_spacing(BoxLength_pc, size(B1, 3))
+    PixelLength_pc, PixelLength_cm, DistanceArray =
+        los_pixel_length_pc, los_pixel_length_cm, los_distance_array
 
     Bperpcube = Bperp(B1, B2)
-    cube_depth = size(Bperpcube, 3)
-    PixelLength_pc, PixelLength_cm, DistanceArray = los_pixel_scale(BoxLength_pc, cube_depth)
     psi_src = IntrinsicAngle(B1, B2)
+
+    faraday_enabled = uppercase(FaradayRotation) == "Y"
+    filtering_enabled = uppercase(responseSynchrotron) == "Y"
+    noise_enabled = uppercase(add_noise) == "Y"
 
     # Compute electron density
     println("-------------------------------------------")
@@ -65,7 +69,7 @@ function ProcessSynchrotron(simu::AbstractString, LOS, FaradayRotation::Abstract
     WriteData2D(resultspath, intBperp, "intBperp")
 
     # Faraday rotation
-    if uppercase(FaradayRotation) == "Y"
+    if faraday_enabled
         resultspath = joinpath(resultspath, "WithFaraday")
         mkpath(resultspath)
         println("-------------------------------------------")
@@ -82,7 +86,7 @@ function ProcessSynchrotron(simu::AbstractString, LOS, FaradayRotation::Abstract
     end
 
     # Compute Q and U
-    if uppercase(FaradayRotation) == "Y"
+    if faraday_enabled
         println("-------------------------------------------")
         println(Crayon(foreground=:blue, bold=true)("Computing Qnu and Unu with Faraday rotation"))
         Qnu, Unu = QUnu3D(Bperpcube, psi_src, RMcube, nuArray, df, los_pixel_length_cm)
@@ -94,7 +98,7 @@ function ProcessSynchrotron(simu::AbstractString, LOS, FaradayRotation::Abstract
     T_nu = Tnu3D(Bperpcube, nuArray, df, los_pixel_length_cm)
     Bperpcube = nothing
     
-    if uppercase(responseSynchrotron) == "Y"
+    if filtering_enabled
         kernel = Kernel.gaussian(kernel_size_synchrotron)
         println("-------------------------------------------")
         println(Crayon(foreground=:red, bold=true)("Applying filtering"))
@@ -109,7 +113,7 @@ function ProcessSynchrotron(simu::AbstractString, LOS, FaradayRotation::Abstract
         println("No filtering performed.")
     end
     # Adding noise
-    if uppercase(add_noise) == "Y"
+    if noise_enabled
         println("-------------------------------------------")
         println(Crayon(foreground=:red, bold=true)("Adding gaussian noise to Q and U with sigma = $Noise_nu"))
         for i in 1:size(Qnu, 3)
@@ -132,7 +136,7 @@ function ProcessSynchrotron(simu::AbstractString, LOS, FaradayRotation::Abstract
     WriteData3D(resultspath, Pnucube, "Pnu", nuArray)
     WriteData2D(resultspath, Pnumax, "Pnumax")
 
-    if uppercase(FaradayRotation) == "Y"
+    if faraday_enabled
         println("-------------------------------------------")
         println(Crayon(foreground=:red, bold=true)("Performing RMsynthesis"))
         FDF, realFDF, imagFDF = RMSynthesis(Qnu, Unu, nuArray * 1e6, PhiArray)
@@ -162,11 +166,15 @@ function ProcessSynchrotron(simu::String, LOS, FaradayRotation::String, response
     SimuParameters = nothing
 
     los_pixel_length_pc, los_pixel_length_cm, los_distance_array = compute_los_spacing(BoxLength_pc, size(B1, 3))
+    PixelLength_pc, PixelLength_cm, DistanceArray =
+        los_pixel_length_pc, los_pixel_length_cm, los_distance_array
 
     Bperpcube = Bperp(B1, B2)
-    cube_depth = size(Bperpcube, 3)
-    PixelLength_pc, PixelLength_cm, DistanceArray = los_pixel_scale(BoxLength_pc, cube_depth)
     psi_src = IntrinsicAngle(B1, B2)
+
+    faraday_enabled = uppercase(FaradayRotation) == "Y"
+    filtering_enabled = uppercase(responseSynchrotron) == "Y"
+    noise_enabled = uppercase(add_noise) == "Y"
 
     # Compute electron density using alternative prescription
     println("-------------------------------------------")
@@ -200,7 +208,7 @@ function ProcessSynchrotron(simu::String, LOS, FaradayRotation::String, response
     WriteData2D(resultspath, intBperp, "intBperp")
 
     # Faraday rotation
-    if uppercase(FaradayRotation) == "Y"
+    if faraday_enabled
         resultspath = joinpath(resultspath, "WithFaraday")
         mkpath(resultspath)
         println("-------------------------------------------")
@@ -217,7 +225,7 @@ function ProcessSynchrotron(simu::String, LOS, FaradayRotation::String, response
     end
 
     # Compute Q and U
-    if uppercase(FaradayRotation) == "Y"
+    if faraday_enabled
         println("-------------------------------------------")
         println("Computing Qnu and Unu with Faraday rotation")
         Qnu, Unu = QUnu3D(Bperpcube, psi_src, RMcube, nuArray, df, los_pixel_length_cm)
@@ -229,7 +237,7 @@ function ProcessSynchrotron(simu::String, LOS, FaradayRotation::String, response
     T_nu = Tnu3D(Bperpcube, nuArray, df, los_pixel_length_cm)
     Bperpcube = nothing
     
-    if uppercase(responseSynchrotron) == "Y"
+    if filtering_enabled
         kernel = Kernel.gaussian(kernel_size_synchrotron)
         println("-------------------------------------------")
         println("Applying filtering")
@@ -245,7 +253,7 @@ function ProcessSynchrotron(simu::String, LOS, FaradayRotation::String, response
     end
 
     # Adding noise
-    if uppercase(add_noise) == "Y"
+    if noise_enabled
         println("-------------------------------------------")
         println("Adding a gaussian noise to Q and U with sigma = ", Noise_nu)
         for i in 1:size(Qnu, 3)
@@ -288,11 +296,15 @@ function ProcessSynchrotron(simu::String, LOS, FaradayRotation::String, response
     SimuParameters = nothing
 
     los_pixel_length_pc, los_pixel_length_cm, los_distance_array = compute_los_spacing(BoxLength_pc, size(B1, 3))
+    PixelLength_pc, PixelLength_cm, DistanceArray =
+        los_pixel_length_pc, los_pixel_length_cm, los_distance_array
 
     Bperpcube = Bperp(B1, B2)
-    cube_depth = size(Bperpcube, 3)
-    PixelLength_pc, PixelLength_cm, DistanceArray = los_pixel_scale(BoxLength_pc, cube_depth)
     psi_src = IntrinsicAngle(B1, B2)
+
+    faraday_enabled = uppercase(FaradayRotation) == "Y"
+    filtering_enabled = uppercase(responseSynchrotron) == "Y"
+    noise_enabled = uppercase(add_noise) == "Y"
 
     # Compute integral of quantities
     println("-------------------------------------------")
@@ -320,7 +332,7 @@ function ProcessSynchrotron(simu::String, LOS, FaradayRotation::String, response
     WriteData2D(resultspath, intBperp, "intBperp")
 
     # Faraday rotation
-    if uppercase(FaradayRotation) == "Y"
+    if faraday_enabled
         resultspath = joinpath(resultspath, "WithFaraday")
         mkpath(resultspath)
         println("Computing RM")
@@ -336,7 +348,7 @@ function ProcessSynchrotron(simu::String, LOS, FaradayRotation::String, response
     end
 
     # Compute Q and U
-    if uppercase(FaradayRotation) == "Y"
+    if faraday_enabled
         println("-------------------------------------------")
         println("Computing Qnu and Unu with Faraday rotation")
         Qnu, Unu = QUnu3D(Bperpcube, psi_src, RMcube, nuArray, df, los_pixel_length_cm)
@@ -348,7 +360,7 @@ function ProcessSynchrotron(simu::String, LOS, FaradayRotation::String, response
     T_nu = Tnu3D(Bperpcube, nuArray, df, los_pixel_length_cm)
     Bperpcube = nothing
 
-    if uppercase(responseSynchrotron) == "Y"
+    if filtering_enabled
         kernel = Kernel.gaussian(kernel_size_synchrotron)
         println("-------------------------------------------")
         println("Applying filtering")
@@ -363,7 +375,7 @@ function ProcessSynchrotron(simu::String, LOS, FaradayRotation::String, response
         println("No filtering performed.")
     end
     # Adding noise
-    if uppercase(add_noise) == "Y"
+    if noise_enabled
         println("-------------------------------------------")
         println("Adding a gaussian noise to Q and U with sigma = ", Noise_nu)
         for i in 1:size(Qnu, 3)
@@ -386,7 +398,7 @@ function ProcessSynchrotron(simu::String, LOS, FaradayRotation::String, response
     WriteData3D(resultspath, Pnucube, "Pnu", nuArray)
     WriteData2D(resultspath, Pnumax, "Pnumax")
 
-    if uppercase(FaradayRotation) == "Y"
+    if faraday_enabled
         println("-------------------------------------------")
         println("Performing RMsynthesis")
         FDF, realFDF, imagFDF = RMSynthesis(Qnu, Unu, nuArray * 1e6, PhiArray)
