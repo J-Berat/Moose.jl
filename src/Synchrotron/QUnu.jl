@@ -32,41 +32,52 @@ Qnu, Unu = QUnu(Bperp, psi_src, RM, nuArray, df, PixelLength_cm)
 
 """
 
-function QUnu(Bperp, psi_src, RM, nuArray, df, PixelLength_cm)
+struct EmissivityInterpolator
+    B::Vector{Float64}
+    eps_interp::Spline2D
+end
 
-    B = unique(df.B)
-    nu = unique(df.nu)
-    eps = reshape(df.e_perp .- df.e_para, (size(nu,1), size(B,1)))
-
-    # 2D interpolation function 
+function EmissivityInterpolator(df::DataFrame)
+    B = collect(unique(df.B))
+    nu = collect(unique(df.nu))
+    eps = reshape(df.e_perp .- df.e_para, (length(nu), length(B)))
     eps_interp = Spline2D(B, nu, eps)
-    
+    return EmissivityInterpolator(B, eps_interp)
+end
+
+function emissivity_at_frequency!(buffer, B::Vector{Float64}, eps_interp::Spline2D, Bperp::AbstractArray, nui)
+    eps_i = @. eps_interp(B, nui)
+    eps_i_interp = linear_interpolation(B, eps_i, extrapolation_bc=Line())
+    buffer .= @. eps_i_interp(Bperp)
+    return buffer
+end
+
+function QUnu(Bperp, psi_src, RM, nuArray, df, PixelLength_cm; precomputed_interp=nothing)
+    interpolator = precomputed_interp === nothing ? EmissivityInterpolator(df) : precomputed_interp
     Nfreq = length(nuArray)
     Qnu = zeros(Nfreq)
     Unu = zeros(Nfreq)
+    eps_buffer = similar(Bperp, Float64)
 
-    # QUnu computation       
     for i = 1:Nfreq
         nui = nuArray[i]
 
-        eps_i = @. eps_interp(B, nui)  #interpolation vector at frequency nui
-        eps_i_interp = linear_interpolation(B, eps_i, extrapolation_bc=Line()) # 1D interpolation function
-        eps_i = @. eps_i_interp(Bperp)  # interpolate only on B over the full cube
+        emissivity_at_frequency!(eps_buffer, interpolator.B, interpolator.eps_interp, Bperp, nui)
 
         FaradayAngle = RM .* (C_m / (nui * 1e6))^2
         argument = 2 .* (psi_src .+ FaradayAngle)
-        
-        integrande_U = eps_i .* sin.(argument)
-        integrande_Q = eps_i .* cos.(argument)
-        Unui =  sum(integrande_U) .* PixelLength_cm
-        Qnui =  sum(integrande_Q) .* PixelLength_cm
-    
-        Unu[i] = @. BrightnessTemperature(nui,Unui)
-        Qnu[i] = @. BrightnessTemperature(nui,Qnui)
+
+        integrande_U = eps_buffer .* sin.(argument)
+        integrande_Q = eps_buffer .* cos.(argument)
+        Unui = sum(integrande_U) .* PixelLength_cm
+        Qnui = sum(integrande_Q) .* PixelLength_cm
+
+        Unu[i] = @. BrightnessTemperature(nui, Unui)
+        Qnu[i] = @. BrightnessTemperature(nui, Qnui)
     end
     return Qnu, Unu
-    
 end
+
 """
     QUnu3D(Bperpcube::AbstractArray, psi_src::AbstractArray, RM::AbstractArray, nuArray::AbstractArray, df::DataFrame, PixelLength_cm::Float64) -> Tuple{AbstractArray, AbstractArray}
 
@@ -101,22 +112,19 @@ Qnu, Unu = QUnu3D(Bperpcube, psi_src, RM, nuArray, df, PixelLength_cm)
 """
 function QUnu3D(Bperpcube, psi_src, RM, nuArray, df, PixelLength_cm)
     Nfreq = length(nuArray)
-    nx,ny = size(Bperpcube,1), size(Bperpcube,2)
+    nx, ny = size(Bperpcube, 1), size(Bperpcube, 2)
     Qnu = zeros(nx, ny, Nfreq)
     Unu = zeros(nx, ny, Nfreq)
-    
-    Threads.@threads for i = 1:nx
-        Threads.@threads for j = 1:ny
-            Bperp_vec = Bperpcube[i,j,:]
-            #computing RM
-            RM_vec = RM[i,j,:]
-            #computing Stokes Qnu, Unu
-            psi_src_vec = psi_src[i,j,:] #instrinsic angle of polarization
-            Qnu[i,j,:], Unu[i,j,:] = QUnu(Bperp_vec, psi_src_vec, RM_vec, nuArray, df, PixelLength_cm)
-        end
+    interpolator = EmissivityInterpolator(df)
+
+    Threads.@threads for idx in CartesianIndices((1:nx, 1:ny))
+        i, j = idx[1], idx[2]
+        @views Bperp_vec = Bperpcube[i, j, :]
+        @views RM_vec = RM[i, j, :]
+        @views psi_src_vec = psi_src[i, j, :]
+        Qnu[i, j, :], Unu[i, j, :] = QUnu(Bperp_vec, psi_src_vec, RM_vec, nuArray, df, PixelLength_cm; precomputed_interp=interpolator)
     end
     return Qnu, Unu
-
 end
 
 """
@@ -149,39 +157,32 @@ PixelLength_cm = 1.0
 # Function call
 Qnu, Unu = QUnuNoFaraday(Bperp, psi_src, nuArray, df, PixelLength_cm)
 """
-function QUnuNoFaraday(Bperp, psi_src, nuArray, df, PixelLength_cm)
-    
-    B = unique(df.B)
-    nu = unique(df.nu)
-    eps = reshape(df.e_perp .- df.e_para, (size(nu,1), size(B,1)))
+function QUnuNoFaraday(Bperp, psi_src, nuArray, df, PixelLength_cm; precomputed_interp=nothing)
 
-    # 2D interpolation function 
-    eps_interp = Spline2D(B, nu, eps)
-    
+    interpolator = precomputed_interp === nothing ? EmissivityInterpolator(df) : precomputed_interp
+
     Nfreq = length(nuArray)
     Qnu = zeros(Nfreq)
     Unu = zeros(Nfreq)
+    eps_buffer = similar(Bperp, Float64)
 
-    # QUnu computation       
     for i = 1:Nfreq
         nui = nuArray[i]
 
-        eps_i = @. eps_interp(B, nui)  #interpolation vector at frequency nui
-        eps_i_interp = linear_interpolation(B, eps_i, extrapolation_bc=Line()) # 1D interpolation function
-        eps_i = @. eps_i_interp(Bperp)  # interpolate only on B over the full cube
-        
-        argument = 2 .* psi_src 
-        
-        integrande_U = eps_i .* sin.(argument)
-        integrande_Q = eps_i .* cos.(argument)
+        emissivity_at_frequency!(eps_buffer, interpolator.B, interpolator.eps_interp, Bperp, nui)
+
+        argument = 2 .* psi_src
+
+        integrande_U = eps_buffer .* sin.(argument)
+        integrande_Q = eps_buffer .* cos.(argument)
         Unui =  sum(integrande_U) .* PixelLength_cm
         Qnui =  sum(integrande_Q) .* PixelLength_cm
-    
+
         Unu[i] = @. BrightnessTemperature(nui,Unui)
         Qnu[i] = @. BrightnessTemperature(nui,Qnui)
     end
     return Qnu, Unu
-    
+
 end
 
 """
@@ -215,18 +216,17 @@ PixelLength_cm = 1.0
 Qnu, Unu = QUnuNoFaraday3D(Bperpcube, psi_src, nuArray, df, PixelLength_cm)
 """
 function QUnuNoFaraday3D(Bperpcube, psi_src, nuArray, df, PixelLength_cm)
-    
+
     Nfreq = length(nuArray)
     Qnu = zeros(size(Bperpcube,1), size(Bperpcube,2), Nfreq)
     Unu = zeros(size(Bperpcube,1), size(Bperpcube,2), Nfreq)
-    
-    Threads.@threads for i = 1:size(Bperpcube,1)
-        Threads.@threads for j = 1:size(Bperpcube,2)
-            Bperp_vec = Bperpcube[i,j,:]
-            #computing Stokes Qnu, Unu
-            psi_src_vec = psi_src[i,j,:] #instrinsic angle of polarization
-            Qnu[i,j,:], Unu[i,j,:] = QUnuNoFaraday(Bperp_vec, psi_src_vec, nuArray, df, PixelLength_cm)
-        end
+    interpolator = EmissivityInterpolator(df)
+
+    Threads.@threads for idx in CartesianIndices((1:size(Bperpcube,1), 1:size(Bperpcube,2)))
+        i, j = idx[1], idx[2]
+        @views Bperp_vec = Bperpcube[i,j,:]
+        @views psi_src_vec = psi_src[i,j,:]
+        Qnu[i,j,:], Unu[i,j,:] = QUnuNoFaraday(Bperp_vec, psi_src_vec, nuArray, df, PixelLength_cm; precomputed_interp=interpolator)
     end
 
     return Qnu, Unu
