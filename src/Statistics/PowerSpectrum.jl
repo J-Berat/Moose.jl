@@ -68,21 +68,22 @@ function radial_psd(field::AbstractMatrix; pixel_size::Real = 1.0, nbins::Union{
     nx, ny = size(psd2d)
     fx = reshape(kx, :, 1)
     fy = reshape(ky, 1, :)
-    radii = sqrt.(fx .^ 2 .+ fy .^ 2)
+    radii = hypot.(fx, fy)
 
     nbins = isnothing(nbins) ? max(floor(Int, min(nx, ny) / 2), 1) : nbins
     edges = collect(range(0, maximum(radii), length = nbins + 1))
+    bin_width = max(edges[2] - edges[1], eps(real(eltype(radii))))
+    inv_bin_width = inv(bin_width)
 
     bin_sums = zeros(Float64, nbins)
     bin_counts = zeros(Int, nbins)
 
-    for idx in eachindex(radii)
-        r = radii[idx]
-        bin = searchsortedlast(edges, r)
-        if 1 <= bin <= nbins
-            bin_sums[bin] += psd2d[idx]
-            bin_counts[bin] += 1
-        end
+    r_flat = vec(radii)
+    psd_flat = vec(psd2d)
+    @inbounds for idx in eachindex(r_flat)
+        bin = clamp(floor(Int, r_flat[idx] * inv_bin_width) + 1, 1, nbins)
+        bin_sums[bin] += psd_flat[idx]
+        bin_counts[bin] += 1
     end
 
     bin_centers = (edges[1:end-1] .+ edges[2:end]) ./ 2
