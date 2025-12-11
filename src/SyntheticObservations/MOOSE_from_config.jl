@@ -66,21 +66,56 @@ function build_faraday(cfg)
     end
 end
 
+function normalize_box_lengths(box_length)
+    if box_length isa AbstractVector
+        length(box_length) == 3 || error("Box length array must have three elements (x, y, z).")
+        return (; x = Float64(box_length[1]), y = Float64(box_length[2]), z = Float64(box_length[3]))
+    elseif box_length isa AbstractDict
+        return (; x = Float64(get(box_length, "x", get(box_length, "X", get(box_length, "size_pc", 50.0)))),
+                 y = Float64(get(box_length, "y", get(box_length, "Y", get(box_length, "size_pc", 50.0)))),
+                 z = Float64(get(box_length, "z", get(box_length, "Z", get(box_length, "size_pc", 50.0)))))
+    else
+        return (; x = Float64(box_length), y = Float64(box_length), z = Float64(box_length))
+    end
+end
+
+function normalize_box_pixels(box_pixels)
+    if box_pixels isa AbstractVector
+        length(box_pixels) == 3 || error("Box pixel array must have three elements (x, y, z).")
+        return (; x = Int(box_pixels[1]), y = Int(box_pixels[2]), z = Int(box_pixels[3]))
+    elseif box_pixels isa AbstractDict
+        return (; x = Int(get(box_pixels, "x", get(box_pixels, "X", get(box_pixels, "npix", 256)))),
+                 y = Int(get(box_pixels, "y", get(box_pixels, "Y", get(box_pixels, "npix", 256)))),
+                 z = Int(get(box_pixels, "z", get(box_pixels, "Z", get(box_pixels, "npix", 256)))))
+    else
+        pixels = Int(box_pixels)
+        return (; x = pixels, y = pixels, z = pixels)
+    end
+end
+
 function build_distance_parameters(cfg)
     box_cfg = get(cfg, "box", nothing)
-    if box_cfg isa AbstractDict
-        box_length_pc = get(box_cfg, "size_pc", 50.0)
-        box_length_pix = get(box_cfg, "npix", 256)
-    else
-        box_length_pc = get(cfg, "BoxLength_pc", 50.0)
-        box_length_pix = get(cfg, "BoxLength_pix", 256)
-    end
+    raw_box_length_pc = box_cfg isa AbstractDict ? get(box_cfg, "size_pc") do
+        any(haskey(box_cfg, key) for key in ("x", "X", "y", "Y", "z", "Z")) ? box_cfg : get(cfg, "BoxLength_pc", 50.0)
+    end : get(cfg, "BoxLength_pc", 50.0)
+    raw_box_length_pix = box_cfg isa AbstractDict ? get(box_cfg, "npix") do
+        get(cfg, "BoxLength_pix", 256)
+    end : get(cfg, "BoxLength_pix", 256)
 
-    pixel_length_pc = Float64(box_length_pc) / Float64(box_length_pix)
-    pixel_length_cm = pixel_length_pc * PARSEC_TO_CM
-    distance_array = range(start = 0.0, stop = Float64(box_length_pc), step = pixel_length_pc)
+    box_length_pc = normalize_box_lengths(raw_box_length_pc)
+    box_length_pix = normalize_box_pixels(raw_box_length_pix)
 
-    return pixel_length_pc, pixel_length_cm, Float64(box_length_pc), distance_array
+    pixel_length_pc = (; x = box_length_pc.x / box_length_pix.x,
+                        y = box_length_pc.y / box_length_pix.y,
+                        z = box_length_pc.z / box_length_pix.z)
+    pixel_length_cm = (; x = pixel_length_pc.x * PARSEC_TO_CM,
+                        y = pixel_length_pc.y * PARSEC_TO_CM,
+                        z = pixel_length_pc.z * PARSEC_TO_CM)
+    distance_array = (; x = range(start = 0.0, stop = box_length_pc.x, step = pixel_length_pc.x),
+                      y = range(start = 0.0, stop = box_length_pc.y, step = pixel_length_pc.y),
+                      z = range(start = 0.0, stop = box_length_pc.z, step = pixel_length_pc.z))
+
+    return pixel_length_pc, pixel_length_cm, box_length_pc, distance_array
 end
 
 """
