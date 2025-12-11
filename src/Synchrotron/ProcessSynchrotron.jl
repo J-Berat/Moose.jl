@@ -102,7 +102,7 @@ function ProcessSynchrotron(simu::AbstractString, LOS, FaradayRotation::Abstract
         kernel = Kernel.gaussian(kernel_size_synchrotron)
         println("-------------------------------------------")
         println(Crayon(foreground=:red, bold=true)("Applying filtering"))
-        for i in 1:length(nuArray)
+        @views for i in axes(Qnu, 3)
             Qnu[:, :, i] = HighPass(Qnu[:, :, i], kernel)
             Unu[:, :, i] = HighPass(Unu[:, :, i], kernel)
             T_nu[:, :, i] = HighPass(T_nu[:, :, i], kernel)
@@ -116,9 +116,13 @@ function ProcessSynchrotron(simu::AbstractString, LOS, FaradayRotation::Abstract
     if noise_enabled
         println("-------------------------------------------")
         println(Crayon(foreground=:red, bold=true)("Adding gaussian noise to Q and U with sigma = $Noise_nu"))
-        for i in 1:size(Qnu, 3)
-            noiseQ = rand(Normal(0, Noise_nu),size(Qnu[:, :, i]))
-            noiseU = rand(Normal(0, Noise_nu),size(Unu[:, :, i]))
+        noiseQ = similar(Qnu[:, :, 1])
+        noiseU = similar(Unu[:, :, 1])
+        distQ = Normal(0, Noise_nu)
+        distU = Normal(0, Noise_nu)
+        @views for i in axes(Qnu, 3)
+            rand!(distQ, noiseQ)
+            rand!(distU, noiseU)
             Qnu[:, :, i] .+= noiseQ
             Unu[:, :, i] .+= noiseU
         end
@@ -241,7 +245,7 @@ function ProcessSynchrotron(simu::String, LOS, FaradayRotation::String, response
         kernel = Kernel.gaussian(kernel_size_synchrotron)
         println("-------------------------------------------")
         println("Applying filtering")
-        for i in 1:length(nuArray)
+        @views for i in axes(Qnu, 3)
             Qnu[:, :, i] = HighPass(Qnu[:, :, i], kernel)
             Unu[:, :, i] = HighPass(Unu[:, :, i], kernel)
             T_nu[:, :, i] = HighPass(T_nu[:, :, i], kernel)
@@ -256,9 +260,13 @@ function ProcessSynchrotron(simu::String, LOS, FaradayRotation::String, response
     if noise_enabled
         println("-------------------------------------------")
         println("Adding a gaussian noise to Q and U with sigma = ", Noise_nu)
-        for i in 1:size(Qnu, 3)
-            noiseQ = rand(Normal(0, Noise_nu),size(Qnu[:, :, i]))
-            noiseU = rand(Normal(0, Noise_nu),size(Unu[:, :, i]))
+        noiseQ = similar(Qnu[:, :, 1])
+        noiseU = similar(Unu[:, :, 1])
+        distQ = Normal(0, Noise_nu)
+        distU = Normal(0, Noise_nu)
+        @views for i in axes(Qnu, 3)
+            rand!(distQ, noiseQ)
+            rand!(distU, noiseU)
             Qnu[:, :, i] .+= noiseQ
             Unu[:, :, i] .+= noiseU
         end
@@ -364,7 +372,7 @@ function ProcessSynchrotron(simu::String, LOS, FaradayRotation::String, response
         kernel = Kernel.gaussian(kernel_size_synchrotron)
         println("-------------------------------------------")
         println("Applying filtering")
-        for i in 1:length(nuArray)
+        @views for i in axes(Qnu, 3)
             Qnu[:, :, i] = HighPass(Qnu[:, :, i], kernel)
             Unu[:, :, i] = HighPass(Unu[:, :, i], kernel)
             T_nu[:, :, i] = HighPass(T_nu[:, :, i], kernel)
@@ -378,9 +386,13 @@ function ProcessSynchrotron(simu::String, LOS, FaradayRotation::String, response
     if noise_enabled
         println("-------------------------------------------")
         println("Adding a gaussian noise to Q and U with sigma = ", Noise_nu)
-        for i in 1:size(Qnu, 3)
-            noiseQ = rand(Normal(0, Noise_nu),size(Qnu[:, :, i]))
-            noiseU = rand(Normal(0, Noise_nu),size(Unu[:, :, i]))
+        noiseQ = similar(Qnu[:, :, 1])
+        noiseU = similar(Unu[:, :, 1])
+        distQ = Normal(0, Noise_nu)
+        distU = Normal(0, Noise_nu)
+        @views for i in axes(Qnu, 3)
+            rand!(distQ, noiseQ)
+            rand!(distU, noiseU)
             Qnu[:, :, i] .+= noiseQ
             Unu[:, :, i] .+= noiseU
         end
