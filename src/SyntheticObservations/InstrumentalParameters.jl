@@ -91,11 +91,12 @@ Prompt the user to enter box size parameters and compute the related distances a
 # Description
 This function prompts the user to provide:
 - The side length of the box in parsecs (`BoxLength_pc`).
-- The resolution of the box in pixels (`BoxLength_pix`).
+- The resolution of the box along the integration dimension in pixels (`BoxLength_pix`).
 
 It computes:
-1. The pixel length in parsecs and centimeters.
-2. An array of distances across the box.
+1. The pixel length in parsecs and centimeters along the line of sight.
+2. An array of distances across that dimension. The distance sampling is later recomputed
+   using the actual cube depth so non-cubic datasets are handled correctly.
 
 # Example
 ```julia
@@ -112,29 +113,30 @@ PixelLength_cm = 6.03281e17
 BoxLength_pc = 50.0
 DistanceArray = [0.0, 0.1953125, ..., 49.8046875, 50.0]
 """
-function DistanceParameters()   
+function DistanceParameters()
     println("Please enter the values for the parameters:")
-    BoxLength_pc_x = ask_user("Size of the box along X (pc), please give a Float", 50.)
-    BoxLength_pc_y = ask_user("Size of the box along Y (pc), please give a Float", 50.)
-    BoxLength_pc_z = ask_user("Size of the box along Z (pc), please give a Float", 50.)
-    BoxLength_pix_x = ask_user("Number of pixels along X", 256)
-    BoxLength_pix_y = ask_user("Number of pixels along Y", 256)
-    BoxLength_pix_z = ask_user("Number of pixels along Z", 256)
+    BoxLength_pc = ask_user("Side of the Box size (pc), please give a Float", 50.)
+    BoxLength_pix = ask_user("Number of pixels along the line of sight", 256)
 
-    PixelLength_pc = (; x = BoxLength_pc_x / BoxLength_pix_x,
-                       y = BoxLength_pc_y / BoxLength_pix_y,
-                       z = BoxLength_pc_z / BoxLength_pix_z)
-    PixelLength_cm = (; x = PixelLength_pc.x * PARSEC_TO_CM,
-                       y = PixelLength_pc.y * PARSEC_TO_CM,
-                       z = PixelLength_pc.z * PARSEC_TO_CM)
-
-    DistanceArray = (; x = range(start=0, stop=BoxLength_pc_x, step=PixelLength_pc.x),
-                     y = range(start=0, stop=BoxLength_pc_y, step=PixelLength_pc.y),
-                     z = range(start=0, stop=BoxLength_pc_z, step=PixelLength_pc.z))
-
-    BoxLength_pc = (; x = Float64(BoxLength_pc_x), y = Float64(BoxLength_pc_y), z = Float64(BoxLength_pc_z))
+    PixelLength_pc, PixelLength_cm, DistanceArray = los_pixel_scale(BoxLength_pc, BoxLength_pix)
 
     return PixelLength_pc, PixelLength_cm, BoxLength_pc, DistanceArray
+end
+
+"""
+    los_pixel_scale(BoxLength_pc::Real, cube_depth::Integer)
+
+Compute the pixel length and distance sampling along the line of sight given a physical
+length and a number of samples.
+"""
+function los_pixel_scale(BoxLength_pc::Real, cube_depth::Integer)
+    cube_depth > 0 || error("Cube depth must be positive, got $(cube_depth)")
+
+    PixelLength_pc = Float64(BoxLength_pc) / cube_depth
+    PixelLength_cm = PixelLength_pc * PARSEC_TO_CM
+    DistanceArray = range(start = 0.0, step = PixelLength_pc, length = cube_depth)
+
+    return PixelLength_pc, PixelLength_cm, DistanceArray
 end
 
 """

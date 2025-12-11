@@ -343,39 +343,41 @@ Flow:
 
     list_LOS = ["x", "y", "z"]
     los_prompt = "Enter 'all' to process all lines of sight (x, y, z) or specify comma-separated ones (e.g., x,y):"
-    los_choice = ask_user(los_prompt, get(config, "chosen_LOS_input", "all"))
-    chosen_LOS = begin
+
+    function parse_los_choice(los_choice)
         valid_los = String[]
-        while true
-            if uppercase(strip(los_choice)) == "ALL"
-                empty!(valid_los)
-                append!(valid_los, list_LOS)
-                break
-            end
-
-            los_input = split(los_choice, ",")
-            empty!(valid_los)
-            for los in los_input
-                candidate = lowercase(strip(los))
-                isempty(candidate) && continue
-                if candidate in list_LOS
-                    push!(valid_los, candidate)
-                else
-                    println("[Warning] Ignoring invalid line of sight: $(candidate). Valid options are x, y, z.")
-                end
-            end
-
-            if !isempty(valid_los)
-                break
-            end
-
-            println("[Error] No valid lines of sight provided. Use 'all' or comma-separated values like x,y and try again.")
-            los_choice = ask_user(los_prompt, los_choice)
+        if uppercase(strip(los_choice)) == "ALL"
+            append!(valid_los, list_LOS)
+            return valid_los
         end
 
-        config["chosen_LOS_input"] = uppercase(strip(los_choice)) == "ALL" ? "all" : join(valid_los, ",")
-        valid_los
+        for los in split(los_choice, ",")
+            candidate = lowercase(strip(los))
+            isempty(candidate) && continue
+            if candidate in list_LOS
+                push!(valid_los, candidate)
+            else
+                println("[Warning] Ignoring invalid line of sight: $(candidate). Valid options are x, y, z.")
+            end
+        end
+
+        return valid_los
     end
+
+    los_choice = get(config, "chosen_LOS_input", "all")
+    valid_los = String[]
+    while isempty(valid_los)
+        los_choice = ask_user(
+            los_prompt,
+            los_choice;
+            validate = choice -> !isempty(parse_los_choice(choice)),
+            error_message = "[Error] No valid lines of sight provided. Use 'all' or comma-separated values like x,y and try again.",
+        )
+        valid_los = parse_los_choice(los_choice)
+    end
+
+    config["chosen_LOS_input"] = uppercase(strip(los_choice)) == "ALL" ? "all" : join(valid_los, ",")
+    chosen_LOS = valid_los
     config["chosen_LOS"] = chosen_LOS
 
     interpolation_default = get(config, "interpolation_file_path", joinpath(homedir(), "emissivity.dat"))
