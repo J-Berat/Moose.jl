@@ -114,16 +114,26 @@ DistanceArray = [0.0, 0.1953125, ..., 49.8046875, 50.0]
 """
 function DistanceParameters()   
     println("Please enter the values for the parameters:")
-    BoxLength_pc = ask_user("Side of the Box size (pc), please give a Float", 50.)
-    BoxLength_pix = ask_user("Side of the Box size (pixel)", 256)
-    PixelLength_pc = BoxLength_pc / BoxLength_pix
-    PixelLength_cm = PixelLength_pc * PARSEC_TO_CM
-    
-    Dstart = 0
-    Dend = BoxLength_pc
-    dD = PixelLength_pc
-    DistanceArray = range(start=Dstart, stop=Dend, step=dD)
-    
+    BoxLength_pc_x = ask_user("Size of the box along X (pc), please give a Float", 50.)
+    BoxLength_pc_y = ask_user("Size of the box along Y (pc), please give a Float", 50.)
+    BoxLength_pc_z = ask_user("Size of the box along Z (pc), please give a Float", 50.)
+    BoxLength_pix_x = ask_user("Number of pixels along X", 256)
+    BoxLength_pix_y = ask_user("Number of pixels along Y", 256)
+    BoxLength_pix_z = ask_user("Number of pixels along Z", 256)
+
+    PixelLength_pc = (; x = BoxLength_pc_x / BoxLength_pix_x,
+                       y = BoxLength_pc_y / BoxLength_pix_y,
+                       z = BoxLength_pc_z / BoxLength_pix_z)
+    PixelLength_cm = (; x = PixelLength_pc.x * PARSEC_TO_CM,
+                       y = PixelLength_pc.y * PARSEC_TO_CM,
+                       z = PixelLength_pc.z * PARSEC_TO_CM)
+
+    DistanceArray = (; x = range(start=0, stop=BoxLength_pc_x, step=PixelLength_pc.x),
+                     y = range(start=0, stop=BoxLength_pc_y, step=PixelLength_pc.y),
+                     z = range(start=0, stop=BoxLength_pc_z, step=PixelLength_pc.z))
+
+    BoxLength_pc = (; x = Float64(BoxLength_pc_x), y = Float64(BoxLength_pc_y), z = Float64(BoxLength_pc_z))
+
     return PixelLength_pc, PixelLength_cm, BoxLength_pc, DistanceArray
 end
 
