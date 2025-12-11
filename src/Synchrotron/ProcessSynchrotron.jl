@@ -1,9 +1,28 @@
 using DataFrames
+
+function los_box_length(box_length_pc, LOS)
+    if box_length_pc isa NamedTuple
+        return getproperty(box_length_pc, Symbol(lowercase(String(LOS))))
+    elseif box_length_pc isa AbstractDict
+        return box_length_pc[String(LOS)]
+    else
+        return Float64(box_length_pc)
+    end
+end
+
+function compute_los_spacing(box_length_pc, depth, LOS)
+    depth > 0 || error("Cannot compute line-of-sight spacing for an empty cube.")
+    los_length_pc = los_box_length(box_length_pc, LOS)
+    los_pixel_length_pc = los_length_pc / depth
+    los_pixel_length_cm = los_pixel_length_pc * PARSEC_TO_CM
+    los_distance_array = range(start=0.0, step=los_pixel_length_pc, length=depth)
+    return los_pixel_length_pc, los_pixel_length_cm, los_distance_array
+end
 function ProcessSynchrotron(simu::AbstractString, LOS, FaradayRotation::AbstractString, responseSynchrotron::AbstractString,
                        df::DataFrame, add_noise, Noise_nu, kernel_size_synchrotron, zeta::Float64, Geff::Float64,
                        omegaPAH::Float64, XC::Float64, nuArray::AbstractArray, PhiArray,
-                       PixelLength_pc::Float64, PixelLength_cm::Float64, BoxLength_pc,
-                       DistanceArray::AbstractArray, conversionn, conversionT, conversionB)
+                       PixelLength_pc, PixelLength_cm, BoxLength_pc,
+                       DistanceArray, conversionn, conversionT, conversionB)
     #default_path = joinpath(simu, LOS, "Synchrotron")
     #resultspath = ask_user("Where do you want to save your files?", default_path)
     #mkpath(resultspath) 
@@ -17,7 +36,9 @@ function ProcessSynchrotron(simu::AbstractString, LOS, FaradayRotation::Abstract
     B1, B2, BLOS = SimuParameters[1], SimuParameters[2], SimuParameters[3]
     T, n = SimuParameters[4], SimuParameters[5]
     SimuParameters = nothing
-    
+
+    los_pixel_length_pc, los_pixel_length_cm, los_distance_array = compute_los_spacing(BoxLength_pc, size(B1, 3), LOS)
+
     Bperpcube = Bperp(B1, B2)
     psi_src = IntrinsicAngle(B1, B2)
 
@@ -25,21 +46,21 @@ function ProcessSynchrotron(simu::AbstractString, LOS, FaradayRotation::Abstract
     println("-------------------------------------------")
     println(Crayon(foreground=:blue, bold=true)("Computing electron density"))
     ne = Wolfire_ne(zeta, Geff, omegaPAH, XC, T, n)
-    WriteData3D(resultspath, ne, "ne", DistanceArray)
+    WriteData3D(resultspath, ne, "ne", los_distance_array)
 
     # Compute integral of quantities
     println("-------------------------------------------")
     println(Crayon(foreground=:blue, bold=true)("Computing integrated quantities"))
     Btotal = Btot(B1,B2,BLOS)
-    intBtotal = intLOS(Btotal, PixelLength_cm)
+    intBtotal = intLOS(Btotal, los_pixel_length_cm)
     sigmaBtotal = sigmaLOS(Btotal)
     Btotal = nothing
-    Ne = intLOS(ne, PixelLength_cm)
+    Ne = intLOS(ne, los_pixel_length_cm)
     sigmane = sigmaLOS(ne)
     sigmaT = sigmaLOS(T)
-    intBLOS = intLOS(BLOS, PixelLength_cm)
+    intBLOS = intLOS(BLOS, los_pixel_length_cm)
     sigmaBLOS = sigmaLOS(BLOS)
-    intBperp = intLOS(Bperpcube, PixelLength_cm)
+    intBperp = intLOS(Bperpcube, los_pixel_length_cm)
     B1 = nothing
     B2 = nothing
     
@@ -58,7 +79,7 @@ function ProcessSynchrotron(simu::AbstractString, LOS, FaradayRotation::Abstract
         mkpath(resultspath)
         println("-------------------------------------------")
         println(Crayon(foreground=:blue, bold=true)("Computing RM"))
-        dRM = deltaRM(BLOS, ne, PixelLength_pc)
+        dRM = deltaRM(BLOS, ne, los_pixel_length_pc)
         RMcube = RM(dRM)
         RMmap = RMcube[:, :, end]
         BLOS = nothing
@@ -73,13 +94,13 @@ function ProcessSynchrotron(simu::AbstractString, LOS, FaradayRotation::Abstract
     if uppercase(FaradayRotation) == "Y"
         println("-------------------------------------------")
         println(Crayon(foreground=:blue, bold=true)("Computing Qnu and Unu with Faraday rotation"))
-        Qnu, Unu = QUnu3D(Bperpcube, psi_src, RMcube, nuArray, df, PixelLength_cm)
+        Qnu, Unu = QUnu3D(Bperpcube, psi_src, RMcube, nuArray, df, los_pixel_length_cm)
     else
         println("-------------------------------------------")
         println(Crayon(foreground=:blue, bold=true)("Computing Qnu and Unu without Faraday rotation"))
-        Qnu, Unu = QUnuNoFaraday3D(Bperpcube, psi_src, nuArray, df, PixelLength_cm)
+        Qnu, Unu = QUnuNoFaraday3D(Bperpcube, psi_src, nuArray, df, los_pixel_length_cm)
     end
-    T_nu = Tnu3D(Bperpcube, nuArray, df, PixelLength_cm)
+    T_nu = Tnu3D(Bperpcube, nuArray, df, los_pixel_length_cm)
     Bperpcube = nothing
     
     if uppercase(responseSynchrotron) == "Y"
@@ -134,10 +155,10 @@ function ProcessSynchrotron(simu::AbstractString, LOS, FaradayRotation::Abstract
     end
 end
 
-function ProcessSynchrotron(simu::String, LOS, FaradayRotation::String, responseSynchrotron::String, 
+function ProcessSynchrotron(simu::String, LOS, FaradayRotation::String, responseSynchrotron::String,
                        df::DataFrame, add_noise, Noise_nu, kernel_size_synchrotron, IonizationFraction::Float64,
-                       nuArray::AbstractArray, PhiArray, PixelLength_pc::Float64, PixelLength_cm::Float64, 
-                       BoxLength_pc, DistanceArray::AbstractArray, conversionn, conversionT, conversionB)
+                       nuArray::AbstractArray, PhiArray, PixelLength_pc, PixelLength_cm,
+                       BoxLength_pc, DistanceArray, conversionn, conversionT, conversionB)
     println("-------------------------------------------")
     println("Processing Synchrotron data for LOS: $LOS")
     resultspath = joinpath(simu, LOS, "Synchrotron")
@@ -148,7 +169,9 @@ function ProcessSynchrotron(simu::String, LOS, FaradayRotation::String, response
     B1, B2, BLOS = SimuParameters[1], SimuParameters[2], SimuParameters[3]
     T, n = SimuParameters[4], SimuParameters[5]
     SimuParameters = nothing
-    
+
+    los_pixel_length_pc, los_pixel_length_cm, los_distance_array = compute_los_spacing(BoxLength_pc, size(B1, 3), LOS)
+
     Bperpcube = Bperp(B1, B2)
     psi_src = IntrinsicAngle(B1, B2)
 
@@ -156,21 +179,21 @@ function ProcessSynchrotron(simu::String, LOS, FaradayRotation::String, response
     println("-------------------------------------------")
     println("Computing electron density")
     ne = ne_propto_nH(n, IonizationFraction)
-    WriteData3D(resultspath, ne, "ne", DistanceArray)
+    WriteData3D(resultspath, ne, "ne", los_distance_array)
 
     # Compute integral of quantities
     println("-------------------------------------------")
     println("Computing integrated quantities")
     Btotal = Btot(B1,B2,BLOS)
-    intBtotal = intLOS(Btotal, PixelLength_cm)
+    intBtotal = intLOS(Btotal, los_pixel_length_cm)
     sigmaBtotal = sigmaLOS(Btotal)
     Btotal = nothing
-    Ne = intLOS(ne, PixelLength_cm)
+    Ne = intLOS(ne, los_pixel_length_cm)
     sigmane = sigmaLOS(ne)
     sigmaT = sigmaLOS(T)
-    intBLOS = intLOS(BLOS, PixelLength_cm)
+    intBLOS = intLOS(BLOS, los_pixel_length_cm)
     sigmaBLOS = sigmaLOS(BLOS)
-    intBperp = intLOS(Bperpcube, PixelLength_cm)
+    intBperp = intLOS(Bperpcube, los_pixel_length_cm)
     B1 = nothing
     B2 = nothing
     
@@ -189,7 +212,7 @@ function ProcessSynchrotron(simu::String, LOS, FaradayRotation::String, response
         mkpath(resultspath)
         println("-------------------------------------------")
         println("Computing RM")
-        dRM = deltaRM(BLOS, ne, PixelLength_pc)
+        dRM = deltaRM(BLOS, ne, los_pixel_length_pc)
         RMcube = RM(dRM)
         RMmap = RMcube[:, :, end]
         BLOS = nothing
@@ -204,13 +227,13 @@ function ProcessSynchrotron(simu::String, LOS, FaradayRotation::String, response
     if uppercase(FaradayRotation) == "Y"
         println("-------------------------------------------")
         println("Computing Qnu and Unu with Faraday rotation")
-        Qnu, Unu = QUnu3D(Bperpcube, psi_src, RMcube, nuArray, df, PixelLength_cm)
+        Qnu, Unu = QUnu3D(Bperpcube, psi_src, RMcube, nuArray, df, los_pixel_length_cm)
     else
         println("-------------------------------------------")
         println("Computing Qnu and Unu without Faraday rotation")
-        Qnu, Unu = QUnuNoFaraday3D(Bperpcube, psi_src, nuArray, df, PixelLength_cm)
+        Qnu, Unu = QUnuNoFaraday3D(Bperpcube, psi_src, nuArray, df, los_pixel_length_cm)
     end
-    T_nu = Tnu3D(Bperpcube, nuArray, df, PixelLength_cm)
+    T_nu = Tnu3D(Bperpcube, nuArray, df, los_pixel_length_cm)
     Bperpcube = nothing
     
     if uppercase(responseSynchrotron) == "Y"
@@ -254,10 +277,10 @@ function ProcessSynchrotron(simu::String, LOS, FaradayRotation::String, response
 end
 
 
-function ProcessSynchrotron(simu::String, LOS, FaradayRotation::String, responseSynchrotron::String, 
-                       df::DataFrame,  add_noise, Noise_nu, kernel_size_synchrotron, nuArray::AbstractArray, PhiArray, 
-                       PixelLength_pc::Float64, PixelLength_cm::Float64, BoxLength_pc, 
-                       DistanceArray::AbstractArray, conversionn, conversionT, conversionB)
+function ProcessSynchrotron(simu::String, LOS, FaradayRotation::String, responseSynchrotron::String,
+                       df::DataFrame,  add_noise, Noise_nu, kernel_size_synchrotron, nuArray::AbstractArray, PhiArray,
+                       PixelLength_pc, PixelLength_cm, BoxLength_pc,
+                       DistanceArray, conversionn, conversionT, conversionB)
 
     println("-------------------------------------------")
     println("Processing Synchrotron data for LOS: $LOS")
@@ -270,7 +293,9 @@ function ProcessSynchrotron(simu::String, LOS, FaradayRotation::String, response
     T, n = SimuParameters[4], SimuParameters[5]
     nHp = SimuParameters[7]
     SimuParameters = nothing
-    
+
+    los_pixel_length_pc, los_pixel_length_cm, los_distance_array = compute_los_spacing(BoxLength_pc, size(B1, 3), LOS)
+
     Bperpcube = Bperp(B1, B2)
     psi_src = IntrinsicAngle(B1, B2)
 
@@ -278,15 +303,15 @@ function ProcessSynchrotron(simu::String, LOS, FaradayRotation::String, response
     println("-------------------------------------------")
     println("Computing integrated quantities")
     Btotal = Btot(B1,B2,BLOS)
-    intBtotal = intLOS(Btotal, 1.0)
+    intBtotal = intLOS(Btotal, los_pixel_length_cm)
     sigmaBtotal = sigmaLOS(Btotal)
     Btotal = nothing
-    Ne = intLOS(nHp, PixelLength_cm)
+    Ne = intLOS(nHp, los_pixel_length_cm)
     sigmane = sigmaLOS(nHp)
     sigmaT = sigmaLOS(T)
-    intBLOS = intLOS(BLOS, PixelLength_cm)
+    intBLOS = intLOS(BLOS, los_pixel_length_cm)
     sigmaBLOS = sigmaLOS(BLOS)
-    intBperp = intLOS(Bperpcube, PixelLength_cm)
+    intBperp = intLOS(Bperpcube, los_pixel_length_cm)
     B1 = nothing
     B2 = nothing
     
@@ -304,7 +329,7 @@ function ProcessSynchrotron(simu::String, LOS, FaradayRotation::String, response
         resultspath = joinpath(resultspath, "WithFaraday")
         mkpath(resultspath)
         println("Computing RM")
-        dRM = deltaRM(BLOS, nHp, PixelLength_pc)
+        dRM = deltaRM(BLOS, nHp, los_pixel_length_pc)
         RMcube = RM(dRM)
         RMmap = RMcube[:, :, end]
         BLOS = nothing
@@ -319,13 +344,13 @@ function ProcessSynchrotron(simu::String, LOS, FaradayRotation::String, response
     if uppercase(FaradayRotation) == "Y"
         println("-------------------------------------------")
         println("Computing Qnu and Unu with Faraday rotation")
-        Qnu, Unu = QUnu3D(Bperpcube, psi_src, RMcube, nuArray, df, PixelLength_cm)
+        Qnu, Unu = QUnu3D(Bperpcube, psi_src, RMcube, nuArray, df, los_pixel_length_cm)
     else
         println("-------------------------------------------")
         println("Computing Qnu and Unu without Faraday rotation")
-        Qnu, Unu = QUnuNoFaraday3D(Bperpcube, psi_src, nuArray, df, PixelLength_cm)
+        Qnu, Unu = QUnuNoFaraday3D(Bperpcube, psi_src, nuArray, df, los_pixel_length_cm)
     end
-    T_nu = Tnu3D(Bperpcube, nuArray, df, PixelLength_cm)
+    T_nu = Tnu3D(Bperpcube, nuArray, df, los_pixel_length_cm)
     Bperpcube = nothing
 
     if uppercase(responseSynchrotron) == "Y"
