@@ -14,6 +14,7 @@ using FFTW
 include(joinpath("Utils", "ArrayMath.jl"))
 include(joinpath("Utils", "Prompts.jl"))
 include(joinpath("Utils", "Progress.jl"))
+include(joinpath("Utils", "Errors.jl"))
 include(joinpath("Utils", "InputValidation.jl"))
 
 include(joinpath("FileIO", "FITSUtils.jl"))
@@ -60,6 +61,6 @@ include(joinpath("SyntheticObservations", "MOOSE_from_config.jl"))
 
 using .MOOSEFromConfig: MOOSE_from_config
 
-export run_moose, MOOSE_from_config
+export run_moose, MOOSE_from_config, MooseError, cli_error, config_error
 
 end
