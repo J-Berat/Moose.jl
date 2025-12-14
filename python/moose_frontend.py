@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shlex
 import shutil
 import subprocess
 import sys
@@ -93,6 +94,12 @@ def build_julia_args(parsed: argparse.Namespace, config_path: Path | None) -> Li
     return args
 
 
+def format_command(command: Iterable[str]) -> str:
+    """Return a shell-safe string representation of the command."""
+
+    return shlex.join(list(command))
+
+
 def _normalize_los_values(values: List[str] | None, parser: argparse.ArgumentParser) -> list[str]:
     """Return a normalized list of LOS choices, mirroring the Julia CLI semantics."""
 
@@ -164,6 +171,7 @@ def _log_invocation(log_file: Path, command: Iterable[str], status: int, message
     entry = {
         "timestamp": datetime.utcnow().isoformat() + "Z",
         "command": list(command),
+        "command_string": format_command(command),
         "status": status,
         "message": message,
     }
@@ -181,13 +189,23 @@ def run_julia_frontend(parsed: argparse.Namespace) -> None:
     if julia_path is None:
         raise FileNotFoundError(parsed.julia_binary)
 
+    command_string = format_command(cmd)
+    if parsed.print_command:
+        print(f"Julia command: {command_string}")
+
+    if parsed.dry_run:
+        message = "Dry run: Julia command not executed."
+        if parsed.log_file:
+            _log_invocation(Path(parsed.log_file), cmd, status=0, message=message)
+        return
+
     process = subprocess.run(cmd, cwd=REPO_ROOT)
 
     failure_message = None
     if process.returncode != 0:
         failure_message = (
             "Julia front-end exited with status "
-            f"{process.returncode}. Command: {' '.join(cmd)}"
+            f"{process.returncode}. Command: {command_string}"
         )
 
     if parsed.log_file:
@@ -224,6 +242,16 @@ def build_parser() -> argparse.ArgumentParser:
         "--quiet",
         action="store_true",
         help="Suppress status output from the Julia pipeline.",
+    )
+    parser.add_argument(
+        "--print-command",
+        action="store_true",
+        help="Display the composed Julia command before running it.",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Print the Julia command and exit without invoking Julia.",
     )
 
     parser.add_argument("--base-dir", help="Base directory containing the simulations.")

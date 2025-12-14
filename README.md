@@ -87,6 +87,8 @@ python python/moose_frontend.py --simu /data/simulation --los z --quiet
 
 The wrapper accepts the same options documented for `src/MOOSE_cli.jl` (for example, `--conversionB`, `--filtering`, `--ne-option`, and positional or `--config` paths). The `--julia-binary` flag lets you point to a non-default Julia executable when needed.
 
+For quick validation, `--print-command` shows the fully composed Julia invocation before running it, and `--dry-run` prints the command and exits without launching Julia—perfect for checking paths or shell quoting.
+
 ### How to test locally
 Run the test suite to validate the installation and catch regressions before processing large datasets:
 
