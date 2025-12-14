@@ -6,8 +6,16 @@ input around its mean. All inputs are flattened so that the statistic is
 independent of array shape.
 """
 function RMS(first::AbstractArray, others::AbstractArray...)
-    centered_squares = ((vec(A) .- mean(vec(A))).^2 for A in (first, others...))
+    vectors = [vec(A) for A in (first, others...)]
+
+    lengths = length.(vectors)
+    if length(unique(lengths)) != 1
+        throw(ArgumentError("All inputs to RMS must have the same number of elements; got lengths $(join(lengths, ", "))."))
+    end
+
+    centered_squares = ((v .- mean(v)).^2 for v in vectors)
     total = reduce(+, centered_squares)
+
     return sqrt(mean(total))
 end
 

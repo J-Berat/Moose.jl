@@ -19,5 +19,5 @@ P = Pnu(Q, U)
 # P should be [4.123105625617661, 5.385164807134504, 6.708203932499369]
 ```
 """
-Pnu(Q::AbstractArray, U::AbstractArray) = hypot.(Q, U)
+Pnu(Q, U) = hypot.(Q, U)
 
