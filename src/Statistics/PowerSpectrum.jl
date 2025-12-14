@@ -25,7 +25,9 @@ Compute the 2D power spectral density (PSD) of a 2D field.
 `(kx, ky, psd)`, where `kx` and `ky` are frequency axes and `psd` is the 2D PSD.
 """
 function power_spectrum_2d(field::AbstractMatrix; pixel_size::Real = 1.0, center::Bool = true,
-    detrend_mean::Bool = true, normalize::Bool = true)
+    detrend_mean::Bool = true, normalize::Bool = true, log_progress::Bool = false)
+
+    log_progress && @info "Computing 2D power spectrum" size = size(field) pixel_size = pixel_size detrend_mean = detrend_mean normalize = normalize
 
     data = detrend_mean ? field .- mean(field) : field
     nx, ny = size(data)
@@ -38,10 +40,13 @@ function power_spectrum_2d(field::AbstractMatrix; pixel_size::Real = 1.0, center
     ky = FFTW.fftfreq(ny, 1 / pixel_size)
 
     if center
-        return fftshift(kx), fftshift(ky), fftshift(psd)
+        result = (fftshift(kx), fftshift(ky), fftshift(psd))
     else
-        return kx, ky, psd
+        result = (kx, ky, psd)
     end
+
+    log_progress && @info "2D power spectrum ready" centered = center result_sizes = map(size, result)
+    return result...
 end
 
 """
@@ -60,10 +65,10 @@ Compute the radially averaged 1D PSD of a 2D field.
 `(k, psd_1d)`, where `k` are bin centers and `psd_1d` is the mean PSD per radial bin.
 """
 function radial_psd(field::AbstractMatrix; pixel_size::Real = 1.0, nbins::Union{Int, Nothing} = nothing,
-    detrend_mean::Bool = true, normalize::Bool = true)
+    detrend_mean::Bool = true, normalize::Bool = true, log_progress::Bool = false)
 
     kx, ky, psd2d = power_spectrum_2d(field; pixel_size = pixel_size, center = true,
-        detrend_mean = detrend_mean, normalize = normalize)
+        detrend_mean = detrend_mean, normalize = normalize, log_progress = log_progress)
 
     nx, ny = size(psd2d)
     fx = reshape(kx, :, 1)
@@ -80,14 +85,21 @@ function radial_psd(field::AbstractMatrix; pixel_size::Real = 1.0, nbins::Union{
 
     r_flat = vec(radii)
     psd_flat = vec(psd2d)
+    progress_step = max(floor(Int, length(r_flat) / 10), 1)
     @inbounds for idx in eachindex(r_flat)
         bin = clamp(floor(Int, r_flat[idx] * inv_bin_width) + 1, 1, nbins)
         bin_sums[bin] += psd_flat[idx]
         bin_counts[bin] += 1
+        if log_progress && idx % progress_step == 0
+            print_progress(idx, length(r_flat))
+            @debug "Radial PSD binning" processed = idx total = length(r_flat)
+        end
     end
 
     bin_centers = (edges[1:end-1] .+ edges[2:end]) ./ 2
     psd1d = bin_sums ./ max.(bin_counts, 1)
+
+    log_progress && @info "Radial PSD complete" nbins = nbins
 
     return bin_centers, psd1d
 end

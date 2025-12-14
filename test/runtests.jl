@@ -1,4 +1,5 @@
 using Test
+using Logging
 using MOOSE
 
 @testset "RMS" begin
