@@ -15,6 +15,8 @@ validation_failure(::Type{T}, msg::AbstractString) where {T} = ValidationResult{
 
 isvalid(result::ValidationResult) = result.error === nothing
 
+extname(path::AbstractString) = splitext(path)[2]
+
 function user_error_message(kind::Symbol, path; expected_exts::Vector{String}=String[], reason::Union{Nothing, AbstractString}=nothing)
     if kind == :missing_directory
         return "[Error] The directory '$(path)' does not exist."
