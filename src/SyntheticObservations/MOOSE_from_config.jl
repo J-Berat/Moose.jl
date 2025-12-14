@@ -7,23 +7,63 @@ using Dates
 using JSON
 
 using ..MOOSE: PARSEC_TO_CM, RunConfig, run_moose_processing
+using ..Utils.InputValidation: ValidationResult, ensure_directory_access, validation_failure,
+                               validation_success
 
 function normalize_base_dir(cfg, config_path)
-    base_dir = get(cfg, "base_dir") do
-        error("Config file $(config_path) must define `base_dir`.")
+    raw_dir = get(cfg, "base_dir") do
+        return validation_failure(String, "Config file $(config_path) must define `base_dir`.")
     end
-    isdir(base_dir) || error("Configured base_dir $(base_dir) does not exist.")
-    return base_dir
+
+    raw_dir isa ValidationResult && return raw_dir
+
+    normalized_dir = abspath(expanduser(String(raw_dir)))
+    validation_error = ensure_directory_access(normalized_dir)
+    validation_error === nothing || return validation_failure(String, validation_error)
+
+    resolved_dir = try
+        realpath(normalized_dir)
+    catch
+        normalized_dir
+    end
+
+    return validation_success(resolved_dir)
 end
 
 function collect_simulations(cfg, base_dir, config_path)
     sims = haskey(cfg, "simulations") ? cfg["simulations"] : get(cfg, "chosen_simu") do
-        error("Config file $(config_path) must define either `simulations` or `chosen_simu` (array of simulations).")
+        return validation_failure(Vector{String}, "Config file $(config_path) must define either `simulations` or `chosen_simu` (array of simulations).")
     end
-    sims isa AbstractVector || error("`simulations` must be an array of paths or folder names.")
-    return map(sims) do simu
-        isabspath(simu) ? simu : joinpath(base_dir, simu)
+    sims isa ValidationResult && return sims
+    sims isa AbstractVector || return validation_failure(Vector{String}, "`simulations` must be an array of paths or folder names.")
+
+    paths = String[]
+    errors = String[]
+
+    for simu in sims
+        candidate = isabspath(simu) ? String(simu) : joinpath(base_dir, String(simu))
+        expanded = abspath(expanduser(candidate))
+
+        validation_error = ensure_directory_access(expanded)
+        if validation_error !== nothing
+            push!(errors, validation_error)
+            continue
+        end
+
+        resolved = try
+            realpath(expanded)
+        catch
+            expanded
+        end
+
+        push!(paths, resolved)
     end
+
+    if !isempty(errors)
+        return validation_failure(Vector{String}, join(errors, "\n"))
+    end
+
+    return validation_success(paths)
 end
 
 collect_los(cfg) = get(cfg, "chosen_LOS", ["x", "y", "z"])
@@ -113,8 +153,13 @@ frontend example (`freq`, `box`, `faraday`, `ne`, `emissivity`).
 The function will raise an error if required keys are missing from the configuration.
 """
 function build_config(cfg, config_path)
-    base_dir = normalize_base_dir(cfg, config_path)
-    simu_paths = collect_simulations(cfg, base_dir, config_path)
+    base_dir_result = normalize_base_dir(cfg, config_path)
+    base_dir_result.error === nothing || error(base_dir_result.error)
+    base_dir = base_dir_result.value
+
+    simu_paths_result = collect_simulations(cfg, base_dir, config_path)
+    simu_paths_result.error === nothing || error(simu_paths_result.error)
+    simu_paths = simu_paths_result.value
 
     chosen_LOS = collect_los(cfg)
     conversionB = get(cfg, "conversionB", 1.0)
