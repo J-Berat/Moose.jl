@@ -7,7 +7,7 @@ using Dates
 using JSON
 
 using ..MOOSE: PARSEC_TO_CM, RunConfig, ValidationResult, ensure_directory_access,
-               run_moose_processing, validation_failure, validation_success
+               run_moose_processing, throw_config_error, validation_failure, validation_success
 
 function normalize_base_dir(cfg, config_path)
     raw_dir = get(cfg, "base_dir") do
@@ -65,7 +65,18 @@ function collect_simulations(cfg, base_dir, config_path)
     return validation_success(paths)
 end
 
-collect_los(cfg) = get(cfg, "chosen_LOS", ["x", "y", "z"])
+function collect_los(cfg)
+    los_values = get(cfg, "chosen_LOS", ["x", "y", "z"])
+    los_values isa AbstractVector ||
+        throw_config_error("`chosen_LOS` must be an array of LOS identifiers (x, y, z)."; code=:invalid_los)
+
+    normalized = unique(lowercase.(String.(los_values)))
+    invalid = filter(los -> !(los in ("x", "y", "z")), normalized)
+    !isempty(invalid) &&
+        throw_config_error("Invalid line(s) of sight: $(join(invalid, ", ")). Allowed values are x, y, or z."; code=:invalid_los)
+
+    return normalized
+end
 
 function build_frequency_array(cfg)
     freq_cfg = get(cfg, "freq", nothing)
@@ -78,6 +89,12 @@ function build_frequency_array(cfg)
         end_val = get(cfg, "nuend", 167.0)
         step_val = get(cfg, "dnu", 0.098)
     end
+
+    step_val <= 0 && throw_config_error("Frequency step must be positive (received $(step_val))."; code=:invalid_frequency)
+    end_val <= start_val && throw_config_error(
+        "The end frequency ($(end_val)) must be greater than the start frequency ($(start_val)).";
+        code=:invalid_frequency,
+    )
 
     return Float64(start_val), Float64(end_val), Float64(step_val)
 end
@@ -97,11 +114,17 @@ function build_faraday(cfg)
         dphi = get(cfg, "dphi", 0.1)
         return rotation_flag, Float64(phimin), Float64(phimax), Float64(dphi)
     end
+
+    dphi <= 0 && throw_config_error("The Faraday step dphi must be positive (received $(dphi))."; code=:invalid_faraday_range)
+    phimax <= phimin && throw_config_error(
+        "Faraday rotation range is invalid: phimax ($(phimax)) must be greater than phimin ($(phimin)).";
+        code=:invalid_faraday_range,
+    )
 end
 
 function normalize_box_lengths(box_length)
     if box_length isa AbstractVector
-        length(box_length) == 3 || error("Box length array must have three elements (x, y, z).")
+        length(box_length) == 3 || throw_config_error("Box length array must have three elements (x, y, z).")
         return (; x = Float64(box_length[1]), y = Float64(box_length[2]), z = Float64(box_length[3]))
     elseif box_length isa AbstractDict
         return (; x = Float64(get(box_length, "x", get(box_length, "X", get(box_length, "size_pc", 50.0)))),
@@ -114,7 +137,7 @@ end
 
 function normalize_box_pixels(box_length_pix)
     if box_length_pix isa AbstractVector
-        length(box_length_pix) == 3 || error("Box pixel array must have three elements (x, y, z).")
+        length(box_length_pix) == 3 || throw_config_error("Box pixel array must have three elements (x, y, z).")
         return (; x = Int(box_length_pix[1]), y = Int(box_length_pix[2]), z = Int(box_length_pix[3]))
     elseif box_length_pix isa AbstractDict
         return (; x = Int(get(box_length_pix, "x", get(box_length_pix, "X", get(box_length_pix, "npix", 256)))),
@@ -153,11 +176,11 @@ The function will raise an error if required keys are missing from the configura
 """
 function build_config(cfg, config_path)
     base_dir_result = normalize_base_dir(cfg, config_path)
-    base_dir_result.error === nothing || error(base_dir_result.error)
+    base_dir_result.error === nothing || throw_config_error(base_dir_result.error; code=:missing_base_dir)
     base_dir = base_dir_result.value
 
     simu_paths_result = collect_simulations(cfg, base_dir, config_path)
-    simu_paths_result.error === nothing || error(simu_paths_result.error)
+    simu_paths_result.error === nothing || throw_config_error(simu_paths_result.error; code=:missing_simulation)
     simu_paths = simu_paths_result.value
 
     chosen_LOS = collect_los(cfg)
@@ -174,7 +197,10 @@ function build_config(cfg, config_path)
         emiss_cfg = get(cfg, "emissivity", nothing)
         emiss_cfg isa AbstractDict ? get(emiss_cfg, "path") : nothing
     end
-    interpolation_file_path === nothing && error("Config file $(config_path) must define `interpolation_file_path` or `emissivity.path`.")
+    interpolation_file_path === nothing && throw_config_error(
+        "Config file $(config_path) must define `interpolation_file_path` or `emissivity.path`.";
+        code=:missing_interpolation_path,
+    )
     interpolation_file_path = isabspath(interpolation_file_path) ? interpolation_file_path : joinpath(base_dir, interpolation_file_path)
 
     ne_option = string(get(cfg, "ne_option", get(get(cfg, "ne", Dict()), "mode", 1)))

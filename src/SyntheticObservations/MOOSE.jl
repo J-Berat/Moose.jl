@@ -311,7 +311,8 @@ function run_moose_processing(cfg::RunConfig; quiet::Bool = false, persisted_con
     PhiArray = cfg.faraday_rotation == "Y" ? range(start = cfg.phimin, stop = cfg.phimax, step = cfg.dphi) : nothing
     PixelLength_pc, PixelLength_cm, DistanceArray = los_pixel_scale(cfg.BoxLength_pc, cfg.BoxLength_pix)
 
-    isfile(cfg.interpolation_file_path) || error("The interpolation file $(cfg.interpolation_file_path) was not found.")
+    isfile(cfg.interpolation_file_path) ||
+        throw_config_error("The interpolation file $(cfg.interpolation_file_path) was not found."; code=:missing_interpolation_file)
     df = CSV.File(cfg.interpolation_file_path) |> DataFrame
 
     if !quiet
@@ -323,7 +324,10 @@ function run_moose_processing(cfg::RunConfig; quiet::Bool = false, persisted_con
 
     if cfg.ne_option == "3"
         missing_cubes = [simu for simu in cfg.simulations if !isfile(joinpath(simu, "densityHp.fits"))]
-        !isempty(missing_cubes) && error("Electron density cube 'densityHp.fits' is missing for: $(join(missing_cubes, ", ")).")
+        !isempty(missing_cubes) && throw_config_error(
+            "Electron density cube 'densityHp.fits' is missing for: $(join(missing_cubes, ", ")).";
+            code=:missing_density_cube,
+        )
     end
 
     for (i, simu) in enumerate(cfg.simulations)
@@ -460,7 +464,8 @@ function run_moose_interactive(; quiet::Bool = false, reset_config::Bool = true)
     config["base_dir"] = base_dir
 
     simu_list = get_simulation_list(base_dir)
-    isempty(simu_list) && error("No simulations containing FITS files were found in $(base_dir).")
+    isempty(simu_list) && throw_config_error("No simulations containing FITS files were found in $(base_dir).";
+        code=:missing_simulation)
     display_simulations(simu_list)
 
     simu_prompt = "Enter 'all' to process all simulations or provide comma-separated indices (e.g., 1,3,5):"
@@ -615,7 +620,8 @@ function run_moose_interactive(; quiet::Bool = false, reset_config::Bool = true)
     elseif ne_option == "3"
         missing_cubes = [simu for simu in chosen_simu if !isfile(joinpath(simu, "densityHp.fits"))]
         if !isempty(missing_cubes)
-            error("Electron density cube 'densityHp.fits' is missing for: $(join(missing_cubes, ", ")).")
+            throw_config_error("Electron density cube 'densityHp.fits' is missing for: $(join(missing_cubes, ", ")).";
+                code=:missing_density_cube)
         end
     end
 

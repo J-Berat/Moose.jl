@@ -1,6 +1,8 @@
 using Test
 using Logging
 using MOOSE
+include(joinpath(@__DIR__, "..", "src", "MOOSE_cli.jl"))
+using MOOSE.MOOSEFromConfig: build_config
 
 @testset "RMS" begin
     x = [1.0, 2.0, 3.0]
@@ -69,4 +71,64 @@ end
     k, psd1d = MOOSE.radial_psd(delta_field; detrend_mean = false, normalize = true, nbins = 1)
     @test length(k) == 1
     @test isapprox(psd1d[1], 0.25; atol = 1e-12)
+end
+
+@testset "CLI argument validation" begin
+    err = try
+        parse_cli_args(["--faraday", "maybe"])
+        nothing
+    catch e
+        e
+    end
+
+    @test err isa MOOSE.MooseError
+    @test err.code == :cli_invalid_argument
+    @test occursin("expects Y or N", err.message)
+end
+
+@testset "Config validation" begin
+    mktempdir() do base_dir
+        sim_dir = joinpath(base_dir, "simu1")
+        mkdir(sim_dir)
+
+        cfg = Dict(
+            "base_dir" => base_dir,
+            "simulations" => [sim_dir],
+            "interpolation_file_path" => joinpath(base_dir, "emissivity.csv"),
+            "chosen_LOS" => ["x", "invalid"],
+        )
+
+        err = try
+            build_config(cfg, "config.json")
+            nothing
+        catch e
+            e
+        end
+
+        @test err isa MOOSE.MooseError
+        @test occursin("Invalid line(s) of sight", err.message)
+    end
+
+    mktempdir() do base_dir
+        sim_dir = joinpath(base_dir, "simu2")
+        mkdir(sim_dir)
+
+        cfg = Dict(
+            "base_dir" => base_dir,
+            "simulations" => [sim_dir],
+            "interpolation_file_path" => joinpath(base_dir, "emissivity.csv"),
+            "freq" => Dict("start" => 150.0, "end" => 140.0, "step" => -1.0),
+        )
+
+        err = try
+            build_config(cfg, "config.json")
+            nothing
+        catch e
+            e
+        end
+
+        @test err isa MOOSE.MooseError
+        @test err.code == :invalid_frequency
+        @test occursin("Frequency step", err.message) || occursin("greater than the start frequency", err.message)
+    end
 end
