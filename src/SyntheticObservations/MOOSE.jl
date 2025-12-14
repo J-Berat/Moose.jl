@@ -319,6 +319,7 @@ function run_moose_processing(cfg::RunConfig; quiet::Bool = false, persisted_con
     end
 
     start_time = now()
+    wolfire_constants = cfg.ne_option == "1" ? WolfireConstants() : nothing
 
     if cfg.ne_option == "3"
         missing_cubes = [simu for simu in cfg.simulations if !isfile(joinpath(simu, "densityHp.fits"))]
@@ -332,7 +333,7 @@ function run_moose_processing(cfg::RunConfig; quiet::Bool = false, persisted_con
             println(Crayon(foreground=:yellow, bold=true)("→ Processing LOS: $(LOS)"))
 
             if cfg.ne_option == "1"
-                zeta, Geff, omegaPAH, XC = WolfireConstants()
+                zeta, Geff, omegaPAH, XC = wolfire_constants
                 ProcessSynchrotron(simu, LOS, cfg.faraday_rotation, cfg.responseSynchrotron, df, cfg.add_noise, cfg.SNR_nu,
                     cfg.kernel_size_synchrotron, zeta, Geff, omegaPAH, XC, nuArray, PhiArray, PixelLength_pc, PixelLength_cm,
                     cfg.BoxLength_pc, DistanceArray, cfg.conversionn, cfg.conversionT, cfg.conversionB)
