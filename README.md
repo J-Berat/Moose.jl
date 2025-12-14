@@ -124,11 +124,6 @@ mv mag_field_x.fits Bx.fits
 mv n.fits density.fits
 ```
 
-Additional guidance:
-- All cubes should share the same grid dimensions and WCS metadata so derived maps align spatially.
-- Units do not have to match the recommendations, but providing values in the suggested units keeps prompts and logs easier to interpret.
-- If you intend to supply `densityHp.fits`, ensure the cube includes only the ionized component so that derived thermal electron density matches the intended model.
-
 ---
 
 ## Outputs
