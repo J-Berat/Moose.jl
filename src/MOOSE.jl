@@ -14,6 +14,7 @@ using FFTW
 include(joinpath("Utils", "ArrayMath.jl"))
 include(joinpath("Utils", "Prompts.jl"))
 include(joinpath("Utils", "Progress.jl"))
+include(joinpath("Utils", "InputValidation.jl"))
 
 include(joinpath("FileIO", "FITSUtils.jl"))
 include(joinpath("FileIO", "Header.jl"))

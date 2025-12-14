@@ -263,11 +263,12 @@ Flow:
     base_dir = ""
     while true
         candidate_dir = ask_user("Enter the base directory for simulations", get(config, "base_dir", pwd()))
-        if isdir(candidate_dir)
+        validation_error = ensure_directory_access(candidate_dir)
+        if validation_error === nothing
             base_dir = candidate_dir
             break
         else
-            println("[Error] Base directory $(candidate_dir) does not exist. Please provide a valid folder.")
+            println(validation_error)
         end
     end
     config["base_dir"] = base_dir
@@ -384,10 +385,11 @@ Flow:
     interpolation_file_path = interpolation_default
     while true
         interpolation_file_path = ask_user("Enter the path to the interpolation file", interpolation_file_path)
-        if isfile(interpolation_file_path)
+        validation_error = ensure_readable_file(interpolation_file_path; expected_exts=[".dat"])
+        if validation_error === nothing
             break
         else
-            println("[Error] The interpolation file $(interpolation_file_path) was not found. Please provide a valid path.")
+            println(validation_error)
         end
     end
     config["interpolation_file_path"] = interpolation_file_path

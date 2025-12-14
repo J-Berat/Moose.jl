@@ -1,5 +1,5 @@
 """
-    ReadSimulation(simu::String, LOS::String, conversionn::Number, conversionT::Number, conversionV::Number, conversionB::Number) 
+    ReadSimulation(simu::String, LOS::String, conversionn::Number, conversionT::Number, conversionV::Number, conversionB::Number)
         -> Tuple{AbstractArray, AbstractArray, AbstractArray, AbstractArray, AbstractArray, AbstractArray, AbstractArray, AbstractArray, Union{AbstractArray, Nothing}, Union{AbstractArray, Nothing}}
 
 Reads and processes simulation data from FITS files for a specified line of sight (LOS).
@@ -25,7 +25,41 @@ Reads and processes simulation data from FITS files for a specified line of sigh
   - `nH2::Union{AbstractArray, Nothing}`: Molecular hydrogen density array (or `nothing` if the file is not present).
   - `nHp::Union{AbstractArray, Nothing}`: Ionized hydrogen density array (or `nothing` if the file is not present).
 """
+
+function validate_required_fits(file)
+    validation_error = ensure_readable_file(file; expected_exts=[".fits"])
+    validation_error === nothing || error(validation_error)
+end
+
+function read_required_cube(file, conversion)
+    validate_required_fits(file)
+
+    try
+        return read_file(file, conversion)
+    catch err
+        error(user_error_message(:corrupted_file, file; reason=string(err)))
+    end
+end
+
+function read_optional_cube(file, conversion, LOS)
+    if !ispath(file) || !isfile(file)
+        return nothing
+    end
+
+    validation_error = ensure_readable_file(file; expected_exts=[".fits"])
+    validation_error === nothing || error(validation_error)
+
+    try
+        return permute_dims(read_file(file, conversion), LOS)
+    catch err
+        error(user_error_message(:corrupted_file, file; reason=string(err)))
+    end
+end
+
 function ReadSimulation(simu, LOS, conversionn, conversionT, conversionV, conversionB)
+    validation_error = ensure_directory_access(simu)
+    validation_error === nothing || error(validation_error)
+
     fileBx = "$simu/Bx.fits"
     fileBy = "$simu/By.fits"
     fileBz = "$simu/Bz.fits"
@@ -36,19 +70,22 @@ function ReadSimulation(simu, LOS, conversionn, conversionT, conversionV, conver
     fileVz = "$simu/Vz.fits"
     filenH2 = "$simu/densityH2.fits"
     filenHp = "$simu/densityHp.fits"
-    
-    T = read_file(fileT, conversionT)
-    n = read_file(filen, conversionn)
-    nH2 = read_optional_file(filenH2, conversionn, LOS)
-    nHp = read_optional_file(filenHp, conversionn, LOS)
 
-    B1, B2, BLOS = LOS == "z" ? (read_file(fileBx, conversionB), read_file(fileBy, conversionB), read_file(fileBz, conversionB)) :
-                    LOS == "y" ? (read_file(fileBz, conversionB), read_file(fileBx, conversionB), read_file(fileBy, conversionB)) :
-                                 (read_file(fileBy, conversionB), read_file(fileBz, conversionB), read_file(fileBx, conversionB))
+    required_files = [fileBx, fileBy, fileBz, filen, fileT, fileVx, fileVy, fileVz]
+    foreach(validate_required_fits, required_files)
 
-    V1, V2, VLOS = LOS == "z" ? (read_file(fileVx, conversionV), read_file(fileVy, conversionV), read_file(fileVz, conversionV)) :
-                    LOS == "y" ? (read_file(fileVz, conversionV), read_file(fileVx, conversionV), read_file(fileVy, conversionV)) :
-                                 (read_file(fileVy, conversionV), read_file(fileVz, conversionV), read_file(fileVx, conversionV))
+    T = read_required_cube(fileT, conversionT)
+    n = read_required_cube(filen, conversionn)
+    nH2 = read_optional_cube(filenH2, conversionn, LOS)
+    nHp = read_optional_cube(filenHp, conversionn, LOS)
+
+    B1, B2, BLOS = LOS == "z" ? (read_required_cube(fileBx, conversionB), read_required_cube(fileBy, conversionB), read_required_cube(fileBz, conversionB)) :
+                    LOS == "y" ? (read_required_cube(fileBz, conversionB), read_required_cube(fileBx, conversionB), read_required_cube(fileBy, conversionB)) :
+                                 (read_required_cube(fileBy, conversionB), read_required_cube(fileBz, conversionB), read_required_cube(fileBx, conversionB))
+
+    V1, V2, VLOS = LOS == "z" ? (read_required_cube(fileVx, conversionV), read_required_cube(fileVy, conversionV), read_required_cube(fileVz, conversionV)) :
+                    LOS == "y" ? (read_required_cube(fileVz, conversionV), read_required_cube(fileVx, conversionV), read_required_cube(fileVy, conversionV)) :
+                                 (read_required_cube(fileVy, conversionV), read_required_cube(fileVz, conversionV), read_required_cube(fileVx, conversionV))
 
     B1, B2, BLOS = permute_dims(B1, LOS), permute_dims(B2, LOS), permute_dims(BLOS, LOS)
     V1, V2, VLOS = permute_dims(V1, LOS), permute_dims(V2, LOS), permute_dims(VLOS, LOS)
@@ -58,6 +95,9 @@ function ReadSimulation(simu, LOS, conversionn, conversionT, conversionV, conver
 end
 
 function ReadSimulation(simu, LOS, conversionn, conversionT, conversionB)
+    validation_error = ensure_directory_access(simu)
+    validation_error === nothing || error(validation_error)
+
     fileBx = "$simu/Bx.fits"
     fileBy = "$simu/By.fits"
     fileBz = "$simu/Bz.fits"
@@ -65,18 +105,22 @@ function ReadSimulation(simu, LOS, conversionn, conversionT, conversionB)
     fileT = "$simu/temperature.fits"
     filenH2 = "$simu/densityH2.fits"
     filenHp = "$simu/densityHp.fits"
-    
-    T = read_file(fileT, conversionT)
-    n = read_file(filen, conversionn)
-    nH2 = read_optional_file(filenH2, conversionn, LOS)
-    nHp = read_optional_file(filenHp, conversionn, LOS)
 
-    B1, B2, BLOS = LOS == "z" ? (read_file(fileBx, conversionB), read_file(fileBy, conversionB), read_file(fileBz, conversionB)) :
-                    LOS == "y" ? (read_file(fileBx, conversionB), read_file(fileBz, conversionB), read_file(fileBy, conversionB)) :
-                                 (read_file(fileBy, conversionB), read_file(fileBz, conversionB), read_file(fileBx, conversionB))
+    required_files = [fileBx, fileBy, fileBz, filen, fileT]
+    foreach(validate_required_fits, required_files)
+
+    T = read_required_cube(fileT, conversionT)
+    n = read_required_cube(filen, conversionn)
+    nH2 = read_optional_cube(filenH2, conversionn, LOS)
+    nHp = read_optional_cube(filenHp, conversionn, LOS)
+
+    B1, B2, BLOS = LOS == "z" ? (read_required_cube(fileBx, conversionB), read_required_cube(fileBy, conversionB), read_required_cube(fileBz, conversionB)) :
+                    LOS == "y" ? (read_required_cube(fileBx, conversionB), read_required_cube(fileBz, conversionB), read_required_cube(fileBy, conversionB)) :
+                                 (read_required_cube(fileBy, conversionB), read_required_cube(fileBz, conversionB), read_required_cube(fileBx, conversionB))
 
     B1, B2, BLOS = permute_dims(B1, LOS), permute_dims(B2, LOS), permute_dims(BLOS, LOS)
     T, n = permute_dims(T, LOS), permute_dims(n, LOS)
 
     return (B1, B2, BLOS, T, n, nH2, nHp)
 end
+
