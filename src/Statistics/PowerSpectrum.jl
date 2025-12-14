@@ -46,7 +46,7 @@ function power_spectrum_2d(field::AbstractMatrix; pixel_size::Real = 1.0, center
     end
 
     log_progress && @info "2D power spectrum ready" centered = center result_sizes = map(size, result)
-    return result...
+    return result
 end
 
 """
