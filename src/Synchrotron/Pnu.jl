@@ -1,15 +1,18 @@
 """
-    Pnu(Q::AbstractArray, U::AbstractArray) -> AbstractArray
+    Pnu(Q, U) -> AbstractArray
 
 Calculate the magnitude of the Stokes parameters `Q` and `U` elementwise,
 using `hypot` for improved numerical stability.
 
 # Arguments
-- `Q::AbstractArray`: An array of any size representing the Stokes parameter `Q`.
-- `U::AbstractArray`: An array of any size representing the Stokes parameter `U`.
+- `Q`: A scalar or array representing the Stokes parameter `Q`.
+- `U`: A scalar or array representing the Stokes parameter `U`.
+
+`Q` and `U` only need to be broadcastable with one another; they need not be
+the same shape.
 
 # Returns
-- `AbstractArray`: An array of the same size as the input arrays representing the magnitude of the Stokes parameters.
+- `AbstractArray`: An array representing the magnitude of the Stokes parameters.
 
 # Example
 ```julia
@@ -19,5 +22,5 @@ P = Pnu(Q, U)
 # P should be [4.123105625617661, 5.385164807134504, 6.708203932499369]
 ```
 """
-Pnu(Q::AbstractArray, U::AbstractArray) = hypot.(Q, U)
+Pnu(Q, U) = hypot.(Q, U)
 

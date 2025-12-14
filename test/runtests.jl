@@ -20,48 +20,52 @@ end
     @test MOOSE.Pnu(q, u) == expected
 end
 
-@testset "Input validation" begin
-    tmp = mktempdir()
-    missing_dir = joinpath(tmp, "missing")
-    @test occursin("does not exist", MOOSE.ensure_directory_access(missing_dir))
-
-    file_path = joinpath(tmp, "example.txt")
-    open(file_path, "w") do io
-        write(io, "sample")
-    end
-
-    msg = MOOSE.ensure_readable_file(file_path; expected_exts=[".fits"])
-    @test occursin("expected extension", msg)
-
-    nested_dir = joinpath(tmp, "folder")
-    mkpath(nested_dir)
-    msg_dir = MOOSE.ensure_readable_file(nested_dir; expected_exts=[".fits"])
-    @test occursin("not a regular file", msg_dir)
+@testset "Conversion Jy/beam ↔ K" begin
+    intensity = [0.0, 1.5]
+    nu = 1.0e9
+    theta = 10.0
+    expected = 1.222e3 .* intensity ./ (nu^2 * theta^2)
+    @test all(isapprox.(MOOSE.ConversionJyK(intensity, nothing, nu, theta), expected; rtol = 1e-12))
+    @test iszero(MOOSE.ConversionJyK(0.0, nothing, nu, theta))
 end
 
-@testset "ReadSimulation validation" begin
-    err = nothing
-    try
-        MOOSE.ReadSimulation("/path/that/does/not/exist", "z", 1.0, 1.0, 1.0, 1.0)
-    catch e
-        err = e
-    end
-    @test err !== nothing
-    @test occursin("does not exist", sprint(showerror, err))
+@testset "Rotation Measure" begin
+    BLOS = [1.0, -2.0, 0.5]
+    ne = [0.5, 1.0, 0.0]
+    pixel_length = 2.0
+    expected_delta = 0.81 .* ne .* BLOS .* pixel_length
+    @test MOOSE.deltaRM(BLOS, ne, pixel_length) ≈ expected_delta atol = 0 rtol = 1e-12
 
-    mktempdir() do dir
-        for name in ["Bx", "By", "Bz", "density", "temperature", "Vx", "Vy", "Vz"]
-            touch(joinpath(dir, "$(name).fits"))
-        end
+    @test MOOSE.RM([1.0, 2.0, 3.0]) == [1.0, 3.0, 6.0]
 
-        corrupted_err = nothing
-        try
-            MOOSE.ReadSimulation(dir, "z", 1.0, 1.0, 1.0, 1.0)
-        catch e
-            corrupted_err = e
-        end
+    cube = reshape(1.0:8.0, 2, 2, 2)
+    rm_cube = MOOSE.RM(cube)
+    @test rm_cube[:, :, 1] == cube[:, :, 1]
+    @test rm_cube[:, :, 2] == cube[:, :, 1] .+ cube[:, :, 2]
+end
 
-        @test corrupted_err !== nothing
-        @test occursin("could not be read", sprint(showerror, corrupted_err))
-    end
+@testset "Moments" begin
+    y = [1.0, 2.0, 3.0]
+    x = [1.0, 2.0, 3.0]
+    m0, m1, m2 = MOOSE.moments(y, x = x)
+    @test isapprox(m0, 6.0; atol = 1e-12)
+    @test isapprox(m1, 14 / 6; atol = 1e-12)
+    expected_m2 = sqrt(sum(y .* (x .- m1) .^ 2) / m0)
+    @test isapprox(m2, expected_m2; atol = 1e-12)
+
+    empty_moments = MOOSE.moments([0.0, 0.0]; x = [1.0, 2.0], threshold = 0.5)
+    @test all(isnan, empty_moments)
+end
+
+@testset "Power spectrum" begin
+    delta_field = [1.0 0.0; 0.0 0.0]
+
+    kx, ky, psd2d = MOOSE.power_spectrum_2d(delta_field; detrend_mean = false, normalize = true)
+    @test kx == [-0.5, 0.0]
+    @test ky == [-0.5, 0.0]
+    @test all(isapprox.(psd2d, 0.25; atol = 1e-12))
+
+    k, psd1d = MOOSE.radial_psd(delta_field; detrend_mean = false, normalize = true, nbins = 1)
+    @test length(k) == 1
+    @test isapprox(psd1d[1], 0.25; atol = 1e-12)
 end

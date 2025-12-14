@@ -1,16 +1,18 @@
 # MOOSE
 
-**Mock Observation Of Synchrotron Emission** is an interactive Julia toolkit for processing mock synchrotron emission from MHD simulations. It guides you through selecting simulations, configuring physical units, and running processing pipelines that compute Stokes parameters, rotation measures, and Faraday dispersion functions.
+**Mock Observation Of Synchrotron Emission** is an interactive Julia toolkit for processing mock synchrotron emission from MHD simulations. It guides you through selecting simulations, configuring physical units, and running processing pipelines that compute Stokes parameters, rotation measures, and Faraday dispersion functions. The goal is to make it straightforward to turn raw simulation cubes into reproducible FITS products that mirror common radio-observational analyses.
 
 ---
 
 ## Table of contents
 - [Main features](#main-features)
 - [Project layout](#project-layout)
+- [Quickstart](#quickstart)
 - [Installation](#installation)
 - [Usage](#usage)
 - [Input data requirements](#input-data-requirements)
 - [Outputs](#outputs)
+- [Troubleshooting](#troubleshooting)
 - [Contributors](#contributors)
 
 ---
@@ -32,6 +34,17 @@ Key source files live under `src/`:
 - `Synchrotron/ProcessSynchrotron.jl`: computations for Stokes parameters and emissivity interpolation.
 - `Faraday/RMSynthesis.jl`: utilities for RM synthesis and Faraday depth handling.
 - `Filtering/Filter.jl` and `Utils/*.jl`: common filtering, plotting, and logging helpers.
+
+---
+
+## Quickstart
+If you already have Julia 1.10+ installed, the fastest way to confirm the tool works is:
+
+```bash
+julia --startup-file=no --project -e 'using Pkg; Pkg.instantiate(); using MOOSE; run_moose(help=true)'
+```
+
+This installs dependencies, precompiles the package, and prints the interactive help without requiring any input data. Once that succeeds, move on to preparing your simulation directory and running the standard workflow in [Usage](#usage).
 
 ---
 
@@ -63,6 +76,7 @@ Key source files live under `src/`:
 ### Tips
 - The emissivity interpolation file defaults to `Synchrotron/emissivity.dat` under your home directory; provide a different path when prompted if needed.
 - Use the `help=true` keyword (`run_moose(help=true)`) to print a detailed description of available options without running the pipeline.
+- Keep the Julia session running while iterating on parameters; repeated calls to `run_moose` reuse precompiled code and are noticeably faster than restarting Julia each time.
 
 ### Python front-end
 Prefer Python tooling? Use the lightweight wrapper in `python/moose_frontend.py`, which forwards familiar CLI flags to the Julia entrypoint:
@@ -72,6 +86,13 @@ python python/moose_frontend.py --simu /data/simulation --los z --quiet
 ```
 
 The wrapper accepts the same options documented for `src/MOOSE_cli.jl` (for example, `--conversionB`, `--filtering`, `--ne-option`, and positional or `--config` paths). The `--julia-binary` flag lets you point to a non-default Julia executable when needed.
+
+### How to test locally
+Run the test suite to validate the installation and catch regressions before processing large datasets:
+
+```bash
+julia --startup-file=no --project -e 'using Pkg; Pkg.test()'
+```
 
 ### How to confirm things work
 - **Smoke test the installation:** run `julia --project -e 'using MOOSE; run_moose(help=true)'`. This precompiles the package and prints the built-in help without needing any data files.
@@ -109,6 +130,14 @@ mv n.fits density.fits
 - Processed maps (Stokes parameters, RM maps, Faraday dispersion functions) are written alongside the simulations you choose.
 - A summary log `MOOSE_summary.log` is saved in the base directory, capturing simulations processed, lines of sight, and timing information.
 - Configuration choices are cached in `moose_config.json` to streamline subsequent runs.
+
+---
+
+## Troubleshooting
+- **Julia not found:** verify `julia --version` works in your shell or pass `--julia-binary` to the Python wrapper.
+- **Pkg errors about missing system dependencies:** rerun `Pkg.instantiate()` with `--startup-file=no` to avoid loading packages from a global startup file, and ensure internet access is available for downloads.
+- **Cannot locate FITS cubes:** double-check filenames and working directory; the interactive prompts will echo the expected paths when they are missing.
+- **Slow repeated runs:** keep `moose_config.json` alongside each dataset to skip prompts and reuse validated parameters.
 
 ---
 
