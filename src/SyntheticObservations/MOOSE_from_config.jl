@@ -136,6 +136,7 @@ function MOOSE_from_config(config_path::AbstractString; quiet::Bool = false)
     conversionB = get(cfg, "conversionB", 1.0)
     conversionn = get(cfg, "conversionn", 1.0)
     conversionT = get(cfg, "conversionT", 1.0)
+    log_progress = get(cfg, "log_progress", false)
     responseSynchrotron = uppercase(get(cfg, "responseSynchrotron", "N"))
     kernel_size_synchrotron = get(cfg, "kernel_size_synchrotron", nothing)
     add_noise = uppercase(get(cfg, "add_noise", "N"))
@@ -179,15 +180,15 @@ function MOOSE_from_config(config_path::AbstractString; quiet::Bool = false)
                 zeta, Geff, omegaPAH, XC = WolfireConstants()
                 ProcessSynchrotron(simu_path, LOS, FaradayRotation, responseSynchrotron, df, add_noise, SNR_nu,
                     kernel_size_synchrotron, zeta, Geff, omegaPAH, XC, nuArray, PhiArray, PixelLength_pc, PixelLength_cm,
-                    BoxLength_pc, DistanceArray, conversionn, conversionT, conversionB)
+                    BoxLength_pc, DistanceArray, conversionn, conversionT, conversionB; log_progress = log_progress)
             elseif ne_option == "2"
                 ProcessSynchrotron(simu_path, LOS, FaradayRotation, responseSynchrotron, df, add_noise, SNR_nu,
                     kernel_size_synchrotron, IonizationFraction, nuArray, PhiArray, PixelLength_pc, PixelLength_cm,
-                    BoxLength_pc, DistanceArray, conversionn, conversionT, conversionB)
+                    BoxLength_pc, DistanceArray, conversionn, conversionT, conversionB; log_progress = log_progress)
             else
                 ProcessSynchrotron(simu_path, LOS, FaradayRotation, responseSynchrotron, df, add_noise, SNR_nu, kernel_size_synchrotron,
                     nuArray, PhiArray, PixelLength_pc, PixelLength_cm, BoxLength_pc, DistanceArray,
-                    conversionn, conversionT, conversionB)
+                    conversionn, conversionT, conversionB; log_progress = log_progress)
             end
         end
 

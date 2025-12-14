@@ -35,7 +35,9 @@ realF = [...]
 imagF = [...]
 """
 
-function RMSynthesis(Q::AbstractArray, U::AbstractArray, nuArray::AbstractArray, PhiArray::AbstractArray)
+function RMSynthesis(Q::AbstractArray, U::AbstractArray, nuArray::AbstractArray, PhiArray::AbstractArray; log_progress::Bool = false)
+
+    log_progress && @info "Starting RM synthesis" n_phi = length(PhiArray) n_lambda = length(nuArray)
     
     LambdaSqArray = @. (C_m/nuArray)^2
     
@@ -67,6 +69,10 @@ function RMSynthesis(Q::AbstractArray, U::AbstractArray, nuArray::AbstractArray,
     for i in 1:nPhi
         arg = exp.((-2.0im .* PhiArray[i]) .* a)[[CartesianIndex()],[CartesianIndex()],:]
         F[:,:,i] = K .* sum(P .* arg, dims=3)
+        if log_progress
+            print_progress(i, nPhi)
+            @debug "RM synthesis accumulation" idx = i total = nPhi
+        end
     end
     
     if nDims == 1
@@ -75,6 +81,8 @@ function RMSynthesis(Q::AbstractArray, U::AbstractArray, nuArray::AbstractArray,
         F = dropdims(F,dims=1)
     end
      
+    log_progress && @info "RM synthesis complete" output_size = size(F)
+
     return(abs.(F),real.(F),imag.(F))
 end
 
@@ -108,7 +116,9 @@ absRMSF, fwhmRMSF = getRMSF(nuArray, PhiArray)
 absRMSF = [...]
 fwhmRMSF = ...
 """
-function getRMSF(nuArray::AbstractArray, PhiArray::AbstractArray)
+function getRMSF(nuArray::AbstractArray, PhiArray::AbstractArray; log_progress::Bool = false)
+
+    log_progress && @info "Starting RMSF computation" n_phi = length(PhiArray)
     
     LambdaSqArray = @. (C_m/nuArray)^2
     
@@ -128,7 +138,13 @@ function getRMSF(nuArray::AbstractArray, PhiArray::AbstractArray)
     for i in 1:nPhi
         arg = exp.((-2.0im .* PhiArray[i]) .* a)
         RMSF[i] = K .* sum(WeightArray .* arg)
+        if log_progress
+            print_progress(i, nPhi)
+            @debug "RMSF accumulation" idx = i total = nPhi
+        end
     end
-     
+
+    log_progress && @info "RMSF computation complete" output_size = length(RMSF) fwhm = fwhmRMSF
+
     return(abs.(RMSF),fwhmRMSF)
 end

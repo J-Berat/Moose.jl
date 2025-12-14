@@ -11,7 +11,7 @@ function ProcessSynchrotron(simu::AbstractString, LOS, FaradayRotation::Abstract
                        df::DataFrame, add_noise, Noise_nu, kernel_size_synchrotron, zeta::Float64, Geff::Float64,
                        omegaPAH::Float64, XC::Float64, nuArray::AbstractArray, PhiArray,
                        PixelLength_pc, PixelLength_cm, BoxLength_pc,
-                       DistanceArray, conversionn, conversionT, conversionB)
+                       DistanceArray, conversionn, conversionT, conversionB; log_progress::Bool = false)
     #default_path = joinpath(simu, LOS, "Synchrotron")
     #resultspath = ask_user("Where do you want to save your files?", default_path)
     #mkpath(resultspath) 
@@ -143,7 +143,7 @@ function ProcessSynchrotron(simu::AbstractString, LOS, FaradayRotation::Abstract
     if faraday_enabled
         println("-------------------------------------------")
         println(Crayon(foreground=:red, bold=true)("Performing RMsynthesis"))
-        FDF, realFDF, imagFDF = RMSynthesis(Qnu, Unu, nuArray * 1e6, PhiArray)
+        FDF, realFDF, imagFDF = RMSynthesis(Qnu, Unu, nuArray * 1e6, PhiArray; log_progress = log_progress)
         Pmax = maxCube(FDF)
         WriteData3D(resultspath, FDF, "FDF", PhiArray)
         WriteData3D(resultspath, realFDF, "realFDF", PhiArray)
@@ -157,7 +157,7 @@ end
 function ProcessSynchrotron(simu::String, LOS, FaradayRotation::String, responseSynchrotron::String,
                        df::DataFrame, add_noise, Noise_nu, kernel_size_synchrotron, IonizationFraction::Float64,
                        nuArray::AbstractArray, PhiArray, PixelLength_pc, PixelLength_cm,
-                       BoxLength_pc, DistanceArray, conversionn, conversionT, conversionB)
+                       BoxLength_pc, DistanceArray, conversionn, conversionT, conversionB; log_progress::Bool = false)
     println("-------------------------------------------")
     println("Processing Synchrotron data for LOS: $LOS")
     resultspath = joinpath(simu, LOS, "Synchrotron")
@@ -289,7 +289,7 @@ end
 function ProcessSynchrotron(simu::String, LOS, FaradayRotation::String, responseSynchrotron::String,
                        df::DataFrame,  add_noise, Noise_nu, kernel_size_synchrotron, nuArray::AbstractArray, PhiArray,
                        PixelLength_pc, PixelLength_cm, BoxLength_pc,
-                       DistanceArray, conversionn, conversionT, conversionB)
+                       DistanceArray, conversionn, conversionT, conversionB; log_progress::Bool = false)
 
     println("-------------------------------------------")
     println("Processing Synchrotron data for LOS: $LOS")
@@ -413,7 +413,7 @@ function ProcessSynchrotron(simu::String, LOS, FaradayRotation::String, response
     if faraday_enabled
         println("-------------------------------------------")
         println("Performing RMsynthesis")
-        FDF, realFDF, imagFDF = RMSynthesis(Qnu, Unu, nuArray * 1e6, PhiArray)
+        FDF, realFDF, imagFDF = RMSynthesis(Qnu, Unu, nuArray * 1e6, PhiArray; log_progress = log_progress)
         Pmax = maxCube(FDF)
         WriteData3D(resultspath, FDF, "FDF", PhiArray)
         WriteData3D(resultspath, realFDF, "realFDF", PhiArray)
