@@ -6,9 +6,8 @@ using DataFrames
 using Dates
 using JSON
 
-using ..MOOSE: PARSEC_TO_CM, RunConfig, run_moose_processing
-using ..Utils.InputValidation: ValidationResult, ensure_directory_access, validation_failure,
-                               validation_success
+using ..MOOSE: PARSEC_TO_CM, RunConfig, ValidationResult, ensure_directory_access,
+               run_moose_processing, validation_failure, validation_success
 
 function normalize_base_dir(cfg, config_path)
     raw_dir = get(cfg, "base_dir") do
