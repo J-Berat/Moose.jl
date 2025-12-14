@@ -190,6 +190,188 @@ function write_summary_log(base_dir, chosen_simu, chosen_LOS, elapsed; config_pa
 end
 
 
+struct RunConfig
+    base_dir::String
+    simulations::Vector{String}
+    chosen_LOS::Vector{String}
+    conversionB::Float64
+    conversionn::Float64
+    conversionT::Float64
+    faraday_rotation::String
+    phimin::Float64
+    phimax::Float64
+    dphi::Float64
+    responseSynchrotron::String
+    kernel_size_synchrotron::Union{Nothing, Int}
+    add_noise::String
+    SNR_nu::Union{Nothing, Float64}
+    interpolation_file_path::String
+    ne_option::String
+    IonizationFraction::Union{Nothing, Float64}
+    nustart::Float64
+    nuend::Float64
+    dnu::Float64
+    BoxLength_pc::Float64
+    BoxLength_pix::Int
+    config_path::String
+
+    function RunConfig(
+        base_dir,
+        simulations,
+        chosen_LOS,
+        conversionB,
+        conversionn,
+        conversionT,
+        faraday_rotation,
+        phimin,
+        phimax,
+        dphi,
+        responseSynchrotron,
+        kernel_size_synchrotron,
+        add_noise,
+        SNR_nu,
+        interpolation_file_path,
+        ne_option,
+        IonizationFraction,
+        nustart,
+        nuend,
+        dnu,
+        BoxLength_pc,
+        BoxLength_pix,
+        config_path,
+    )
+        faraday_flag = uppercase(faraday_rotation)
+        response_flag = uppercase(responseSynchrotron)
+        noise_flag = uppercase(add_noise)
+        sim_paths = map(String, simulations)
+        los_list = map(String, chosen_LOS)
+
+        kernel_size_synchrotron = kernel_size_synchrotron === nothing ? nothing : Int(kernel_size_synchrotron)
+        SNR_nu = SNR_nu === nothing ? nothing : Float64(SNR_nu)
+        IonizationFraction = IonizationFraction === nothing ? nothing : Float64(IonizationFraction)
+
+        return new(
+            String(base_dir),
+            sim_paths,
+            los_list,
+            Float64(conversionB),
+            Float64(conversionn),
+            Float64(conversionT),
+            faraday_flag,
+            Float64(phimin),
+            Float64(phimax),
+            Float64(dphi),
+            response_flag,
+            kernel_size_synchrotron,
+            noise_flag,
+            SNR_nu,
+            String(interpolation_file_path),
+            String(ne_option),
+            IonizationFraction,
+            Float64(nustart),
+            Float64(nuend),
+            Float64(dnu),
+            Float64(BoxLength_pc),
+            Int(BoxLength_pix),
+            String(config_path),
+        )
+    end
+end
+
+function config_dict_from_struct(cfg::RunConfig)
+    return Dict(
+        "base_dir" => cfg.base_dir,
+        "chosen_simu" => cfg.simulations,
+        "chosen_LOS" => cfg.chosen_LOS,
+        "conversionB" => cfg.conversionB,
+        "conversionn" => cfg.conversionn,
+        "conversionT" => cfg.conversionT,
+        "FaradayRotation" => cfg.faraday_rotation,
+        "phimin" => cfg.phimin,
+        "phimax" => cfg.phimax,
+        "dphi" => cfg.dphi,
+        "responseSynchrotron" => cfg.responseSynchrotron,
+        "kernel_size_synchrotron" => cfg.kernel_size_synchrotron,
+        "add_noise" => cfg.add_noise,
+        "SNR_nu" => cfg.SNR_nu,
+        "interpolation_file_path" => cfg.interpolation_file_path,
+        "ne_option" => cfg.ne_option,
+        "IonizationFraction" => cfg.IonizationFraction,
+        "nustart" => cfg.nustart,
+        "nuend" => cfg.nuend,
+        "dnu" => cfg.dnu,
+        "BoxLength_pc" => cfg.BoxLength_pc,
+        "BoxLength_pix" => cfg.BoxLength_pix,
+        "config_path" => cfg.config_path,
+    )
+end
+
+function run_moose_processing(cfg::RunConfig; quiet::Bool = false, persisted_config::Union{Nothing, Dict} = nothing)
+    nuArray = range(start = cfg.nustart, stop = cfg.nuend, step = cfg.dnu)
+    PhiArray = cfg.faraday_rotation == "Y" ? range(start = cfg.phimin, stop = cfg.phimax, step = cfg.dphi) : nothing
+    PixelLength_pc, PixelLength_cm, DistanceArray = los_pixel_scale(cfg.BoxLength_pc, cfg.BoxLength_pix)
+
+    isfile(cfg.interpolation_file_path) || error("The interpolation file $(cfg.interpolation_file_path) was not found.")
+    df = CSV.File(cfg.interpolation_file_path) |> DataFrame
+
+    if !quiet
+        print_logo()
+    end
+
+    start_time = now()
+
+    if cfg.ne_option == "3"
+        missing_cubes = [simu for simu in cfg.simulations if !isfile(joinpath(simu, "densityHp.fits"))]
+        !isempty(missing_cubes) && error("Electron density cube 'densityHp.fits' is missing for: $(join(missing_cubes, ", ")).")
+    end
+
+    for (i, simu) in enumerate(cfg.simulations)
+        println("Processing Simulation: $(simu)")
+
+        for LOS in cfg.chosen_LOS
+            println(Crayon(foreground=:yellow, bold=true)("→ Processing LOS: $(LOS)"))
+
+            if cfg.ne_option == "1"
+                zeta, Geff, omegaPAH, XC = WolfireConstants()
+                ProcessSynchrotron(simu, LOS, cfg.faraday_rotation, cfg.responseSynchrotron, df, cfg.add_noise, cfg.SNR_nu,
+                    cfg.kernel_size_synchrotron, zeta, Geff, omegaPAH, XC, nuArray, PhiArray, PixelLength_pc, PixelLength_cm,
+                    cfg.BoxLength_pc, DistanceArray, cfg.conversionn, cfg.conversionT, cfg.conversionB)
+            elseif cfg.ne_option == "2"
+                ion_fraction = cfg.IonizationFraction === nothing ? 0.01 : cfg.IonizationFraction
+                ProcessSynchrotron(simu, LOS, cfg.faraday_rotation, cfg.responseSynchrotron, df, cfg.add_noise, cfg.SNR_nu,
+                    cfg.kernel_size_synchrotron, ion_fraction, nuArray, PhiArray, PixelLength_pc, PixelLength_cm,
+                    cfg.BoxLength_pc, DistanceArray, cfg.conversionn, cfg.conversionT, cfg.conversionB)
+            else
+                ProcessSynchrotron(simu, LOS, cfg.faraday_rotation, cfg.responseSynchrotron, df, cfg.add_noise, cfg.SNR_nu,
+                    cfg.kernel_size_synchrotron, nuArray, PhiArray, PixelLength_pc, PixelLength_cm,
+                    cfg.BoxLength_pc, DistanceArray, cfg.conversionn, cfg.conversionT, cfg.conversionB)
+            end
+        end
+
+        if length(cfg.simulations) > 1
+            println("Finished processing all chosen LOS for simulation: $simu")
+            print_progress(i, length(cfg.simulations))
+        end
+    end
+
+    println("Finished processing all simulations.")
+
+    elapsed = now() - start_time
+    println(Crayon(foreground=:green, bold=true)("Summary:"))
+    println(Crayon(foreground=:green)("Simulations processed: $(join(cfg.simulations, ", "))"))
+    println(Crayon(foreground=:green)("Lines of sight: $(join(cfg.chosen_LOS, ", "))"))
+    println(Crayon(foreground=:green)("Output directory: $(cfg.base_dir)"))
+    println(Crayon(foreground=:green)("Total execution time: $(format_duration(elapsed))"))
+
+    config_to_save = persisted_config === nothing ? config_dict_from_struct(cfg) : persisted_config
+    save_config(config_to_save, cfg.config_path)
+    write_summary_log(cfg.base_dir, map(basename, cfg.simulations), cfg.chosen_LOS, elapsed; config_path=cfg.config_path,
+        faraday=cfg.faraday_rotation, responseSynchrotron=cfg.responseSynchrotron, add_noise=cfg.add_noise,
+        interpolation_file_path=cfg.interpolation_file_path, conversionB=cfg.conversionB, conversionn=cfg.conversionn,
+        conversionT=cfg.conversionT, ne_option=cfg.ne_option)
+end
+
+
 function run_moose(; quiet::Bool = false, reset_config::Bool = true, help::Bool = false)
    if help
        println("""
@@ -219,7 +401,7 @@ Description:
  lines of sight, and configure physical unit conversions and data processing options.
 
  Previous configuration is loaded from `moose_config.json`, unless reset.
- Outputs are saved to the base simulation directory, with logs in `MOOSE_summary.log`.
+Outputs are saved to the base simulation directory, with logs in `MOOSE_summary.log`.
 
 Flow:
  ┌─────────────────────────────┐
@@ -244,7 +426,11 @@ Flow:
 """)
        return
    end
+    cfg, persisted_config = run_moose_interactive(; quiet = quiet, reset_config = reset_config)
+    run_moose_processing(cfg; quiet = true, persisted_config = persisted_config)
+end
 
+function run_moose_interactive(; quiet::Bool = false, reset_config::Bool = true)
     if !quiet
         print_logo()
     end
@@ -258,16 +444,16 @@ Flow:
         config_path = ask_user("Enter the path to the configuration file to load", default_config_path)
         config = load_previous_config(config_path)
     end
-    start_time = now()
 
     base_dir = ""
     while true
         candidate_dir = ask_user("Enter the base directory for simulations", get(config, "base_dir", pwd()))
-        if isdir(candidate_dir)
+        validation_error = ensure_directory_access(candidate_dir)
+        if validation_error === nothing
             base_dir = candidate_dir
             break
         else
-            println("[Error] Base directory $(candidate_dir) does not exist. Please provide a valid folder.")
+            println(validation_error)
         end
     end
     config["base_dir"] = base_dir
@@ -323,12 +509,32 @@ Flow:
     config["conversionn"] = conversionn
     config["conversionT"] = conversionT
 
-    PixelLength_pc, PixelLength_cm, BoxLength_pc, DistanceArray = DistanceParameters()
-    nuArray = FrequencyParameters()
+    BoxLength_pc = ask_user("Side of the Box size (pc), please give a Float", Float64(get(config, "BoxLength_pc", 50.0)))
+    BoxLength_pix = ask_user("Number of pixels along the line of sight", Int(get(config, "BoxLength_pix", 256)))
+    config["BoxLength_pc"] = BoxLength_pc
+    config["BoxLength_pix"] = BoxLength_pix
+
+    nustart = ask_user("Frequency range start (MHz)", Float64(get(config, "nustart", 120)))
+    nuend = ask_user("Frequency range end (MHz)", Float64(get(config, "nuend", 167)))
+    dnu = ask_user("Frequency resolution (MHz)", Float64(get(config, "dnu", 0.098)))
+    config["nustart"] = nustart
+    config["nuend"] = nuend
+    config["dnu"] = dnu
+
     FaradayRotation = ask_user("Do you want to include Faraday rotation in the computation of Q and U? (Y/N)", get(config,"FaradayRotation", "N"))
     faraday_flag = uppercase(FaradayRotation)
     config["FaradayRotation"] = FaradayRotation
-    PhiArray = faraday_flag == "Y" ? FaradayParameters() : nothing
+    phimin = get(config, "phimin", -10.0)
+    phimax = get(config, "phimax", 10.0)
+    dphi = get(config, "dphi", 0.25)
+    if faraday_flag == "Y"
+        phimin = ask_user("Faraday depth range start (rad/m^2)", Float64(phimin))
+        phimax = ask_user("Faraday depth range end (rad/m^2)", Float64(phimax))
+        dphi = ask_user("Faraday depth resolution (rad/m^2)", Float64(dphi))
+    end
+    config["phimin"] = phimin
+    config["phimax"] = phimax
+    config["dphi"] = dphi
 
     responseSynchrotron = ask_user("Do you want to perform filtering (primary beam) for Synchrotron data? (Y/N)", get(config, "responseSynchrotron", "N"))
     kernel_size_synchrotron = uppercase(responseSynchrotron) == "Y" ? ask_user("What kernel size (in pix) do you want for Synchrotron filtering?", get(config, "kernel_size_synchrotron", 11)) : nothing
@@ -384,14 +590,14 @@ Flow:
     interpolation_file_path = interpolation_default
     while true
         interpolation_file_path = ask_user("Enter the path to the interpolation file", interpolation_file_path)
-        if isfile(interpolation_file_path)
+        validation_error = ensure_readable_file(interpolation_file_path; expected_exts=[".dat"])
+        if validation_error === nothing
             break
         else
-            println("[Error] The interpolation file $(interpolation_file_path) was not found. Please provide a valid path.")
+            println(validation_error)
         end
     end
     config["interpolation_file_path"] = interpolation_file_path
-    df = CSV.File(interpolation_file_path) |> DataFrame
 
     ne_option = ""
     while true
@@ -401,12 +607,11 @@ Flow:
     end
     config["ne_option"] = ne_option
 
-    if ne_option == "1"
-        zeta, Geff, omegaPAH, XC = WolfireConstants()
-    elseif ne_option == "2"
+    IonizationFraction = get(config, "IonizationFraction", nothing)
+    if ne_option == "2"
         IonizationFraction = ask_user("Enter the ionization fraction for the alternative prescription:", get(config, "IonizationFraction", 0.01))
         config["IonizationFraction"] = IonizationFraction
-    else
+    elseif ne_option == "3"
         missing_cubes = [simu for simu in chosen_simu if !isfile(joinpath(simu, "densityHp.fits"))]
         if !isempty(missing_cubes)
             error("Electron density cube 'densityHp.fits' is missing for: $(join(missing_cubes, ", ")).")
@@ -417,44 +622,31 @@ Flow:
     config_path = ask_user("Enter the path where the configuration should be saved", save_path_default)
     config["config_path"] = config_path
 
-    total_simu = length(chosen_simu)
-    for (i, simu) in enumerate(chosen_simu)
+    cfg = RunConfig(
+        base_dir,
+        chosen_simu,
+        chosen_LOS,
+        conversionB,
+        conversionn,
+        conversionT,
+        faraday_flag,
+        phimin,
+        phimax,
+        dphi,
+        responseSynchrotron,
+        kernel_size_synchrotron,
+        add_noise,
+        SNR_nu,
+        interpolation_file_path,
+        ne_option,
+        IonizationFraction,
+        nustart,
+        nuend,
+        dnu,
+        BoxLength_pc,
+        BoxLength_pix,
+        config_path,
+    )
 
-        println("Processing Simulation: $(simu)")
-
-        for LOS in chosen_LOS
-            println(Crayon(foreground=:yellow, bold=true)("→ Processing LOS: $(LOS)"))
-
-            if ne_option == "1"
-                ProcessSynchrotron(simu, LOS, FaradayRotation, responseSynchrotron, df, add_noise, SNR_nu,
-                    kernel_size_synchrotron, zeta, Geff, omegaPAH, XC, nuArray, PhiArray, PixelLength_pc, PixelLength_cm,
-                    BoxLength_pc, DistanceArray, conversionn, conversionT, conversionB)
-            elseif ne_option == "2"
-                ProcessSynchrotron(simu, LOS, FaradayRotation, responseSynchrotron, df, add_noise, SNR_nu,
-                    kernel_size_synchrotron, IonizationFraction, nuArray, PhiArray, PixelLength_pc, PixelLength_cm,
-                    BoxLength_pc, DistanceArray, conversionn, conversionT, conversionB)
-            else
-                ProcessSynchrotron(simu, LOS, FaradayRotation, responseSynchrotron, df, add_noise, SNR_nu, kernel_size_synchrotron,
-                    nuArray, PhiArray, PixelLength_pc, PixelLength_cm,
-                    BoxLength_pc, DistanceArray, conversionn, conversionT, conversionB)
-            end
-        end
-        if length(chosen_simu) > 1
-            println("Finished processing all chosen LOS for simulation: $simu")
-            print_progress(i, total_simu)
-        end
-    end
-
-    println("Finished processing all simulations.")
-
-    elapsed = now() - start_time
-    println(Crayon(foreground=:green, bold=true)("Summary:"))
-    println(Crayon(foreground=:green)("Simulations processed: $(join(chosen_simu, ", "))"))
-    println(Crayon(foreground=:green)("Lines of sight: $(join(chosen_LOS, ", "))"))
-    println(Crayon(foreground=:green)("Output directory: $base_dir"))
-    println(Crayon(foreground=:green)("Total execution time: $(format_duration(elapsed))"))
-    println(Crayon(foreground=:green)("Configuration saved to: $(config_path)"))
-
-    save_config(config, config_path)
-    write_summary_log(base_dir, chosen_simu, chosen_LOS, elapsed; config_path=config_path, faraday=faraday_flag, responseSynchrotron=responseSynchrotron, add_noise=add_noise, interpolation_file_path=interpolation_file_path, conversionB=conversionB, conversionn=conversionn, conversionT=conversionT, ne_option=ne_option)
+    return cfg, config
 end

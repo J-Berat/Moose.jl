@@ -6,8 +6,7 @@ using DataFrames
 using Dates
 using JSON
 
-using ..MOOSE: PARSEC_TO_CM, WolfireConstants, ProcessSynchrotron, format_duration,
-                print_logo, save_config, write_summary_log
+using ..MOOSE: PARSEC_TO_CM, RunConfig, run_moose_processing
 
 function normalize_base_dir(cfg, config_path)
     base_dir = get(cfg, "base_dir") do
@@ -27,9 +26,7 @@ function collect_simulations(cfg, base_dir, config_path)
     end
 end
 
-function collect_los(cfg)
-    return get(cfg, "chosen_LOS", ["x", "y", "z"])
-end
+collect_los(cfg) = get(cfg, "chosen_LOS", ["x", "y", "z"])
 
 function build_frequency_array(cfg)
     freq_cfg = get(cfg, "freq", nothing)
@@ -43,7 +40,7 @@ function build_frequency_array(cfg)
         step_val = get(cfg, "dnu", 0.098)
     end
 
-    return range(start = Float64(start_val), stop = Float64(end_val), step = Float64(step_val))
+    return Float64(start_val), Float64(end_val), Float64(step_val)
 end
 
 function build_faraday(cfg)
@@ -53,14 +50,13 @@ function build_faraday(cfg)
         phimin = get(faraday_cfg, "phimin", -20.0)
         phimax = get(faraday_cfg, "phimax", 20.0)
         dphi = get(faraday_cfg, "dphi", 0.1)
-        return enabled ? "Y" : "N", range(start = Float64(phimin), stop = Float64(phimax), step = Float64(dphi))
+        return enabled ? "Y" : "N", Float64(phimin), Float64(phimax), Float64(dphi)
     else
         rotation_flag = uppercase(get(cfg, "FaradayRotation", "N"))
         phimin = get(cfg, "phimin", -20.0)
         phimax = get(cfg, "phimax", 20.0)
         dphi = get(cfg, "dphi", 0.1)
-        phi_array = rotation_flag == "Y" ? range(start = Float64(phimin), stop = Float64(phimax), step = Float64(dphi)) : nothing
-        return rotation_flag, phi_array
+        return rotation_flag, Float64(phimin), Float64(phimax), Float64(dphi)
     end
 end
 
@@ -98,17 +94,7 @@ function build_distance_parameters(cfg)
     box_length_pc = normalize_box_lengths(raw_box_length_pc)
     box_length_pix = normalize_box_pixels(raw_box_length_pix)
 
-    pixel_length_pc = (; x = box_length_pc.x / box_length_pix.x,
-                        y = box_length_pc.y / box_length_pix.y,
-                        z = box_length_pc.z / box_length_pix.z)
-    pixel_length_cm = (; x = pixel_length_pc.x * PARSEC_TO_CM,
-                        y = pixel_length_pc.y * PARSEC_TO_CM,
-                        z = pixel_length_pc.z * PARSEC_TO_CM)
-    distance_array = (; x = range(start = 0.0, stop = box_length_pc.x, step = pixel_length_pc.x),
-                      y = range(start = 0.0, stop = box_length_pc.y, step = pixel_length_pc.y),
-                      z = range(start = 0.0, stop = box_length_pc.z, step = pixel_length_pc.z))
-
-    return pixel_length_pc, pixel_length_cm, box_length_pc, distance_array
+    return Float64(box_length_pc.x), Int(box_length_pix.x)
 end
 
 """
@@ -126,9 +112,7 @@ frontend example (`freq`, `box`, `faraday`, `ne`, `emissivity`).
 
 The function will raise an error if required keys are missing from the configuration.
 """
-function MOOSE_from_config(config_path::AbstractString; quiet::Bool = false)
-    cfg = JSON.parsefile(config_path)
-
+function build_config(cfg, config_path)
     base_dir = normalize_base_dir(cfg, config_path)
     simu_paths = collect_simulations(cfg, base_dir, config_path)
 
@@ -148,67 +132,46 @@ function MOOSE_from_config(config_path::AbstractString; quiet::Bool = false)
     end
     interpolation_file_path === nothing && error("Config file $(config_path) must define `interpolation_file_path` or `emissivity.path`.")
     interpolation_file_path = isabspath(interpolation_file_path) ? interpolation_file_path : joinpath(base_dir, interpolation_file_path)
-    isfile(interpolation_file_path) || error("Interpolation file $(interpolation_file_path) not found.")
 
     ne_option = string(get(cfg, "ne_option", get(get(cfg, "ne", Dict()), "mode", 1)))
     IonizationFraction = get(cfg, "IonizationFraction", get(get(cfg, "ne", Dict()), "ion_fraction", 0.01))
 
-    PixelLength_pc, PixelLength_cm, BoxLength_pc, DistanceArray = build_distance_parameters(cfg)
-    nuArray = build_frequency_array(cfg)
-    FaradayRotation, PhiArray = build_faraday(cfg)
-    df = CSV.File(interpolation_file_path) |> DataFrame
+    BoxLength_pc, BoxLength_pix = build_distance_parameters(cfg)
+    nustart, nuend, dnu = build_frequency_array(cfg)
+    FaradayRotation, phimin, phimax, dphi = build_faraday(cfg)
 
-    if !quiet
-        print_logo()
-    end
+    return RunConfig(
+        base_dir,
+        simu_paths,
+        chosen_LOS,
+        conversionB,
+        conversionn,
+        conversionT,
+        FaradayRotation,
+        phimin,
+        phimax,
+        dphi,
+        responseSynchrotron,
+        kernel_size_synchrotron,
+        add_noise,
+        SNR_nu,
+        interpolation_file_path,
+        ne_option,
+        IonizationFraction,
+        nustart,
+        nuend,
+        dnu,
+        BoxLength_pc,
+        BoxLength_pix,
+        config_path,
+    ), simu_paths
+end
 
-    start_time = now()
+function MOOSE_from_config(config_path::AbstractString; quiet::Bool = false)
+    cfg = JSON.parsefile(config_path)
 
-    if ne_option == "3"
-        missing_cubes = [simu for simu in simu_paths if !isfile(joinpath(simu, "densityHp.fits"))]
-        !isempty(missing_cubes) && error("Electron density cube 'densityHp.fits' is missing for: $(join(missing_cubes, ", ")).")
-    end
-
-    for (i, simu_path) in enumerate(simu_paths)
-        simu_name = basename(simu_path)
-        println("Processing Simulation: $(simu_name)")
-
-        for LOS in chosen_LOS
-            println(Crayon(foreground = :yellow, bold = true)("→ Processing LOS: $(LOS)"))
-
-            if ne_option == "1"
-                zeta, Geff, omegaPAH, XC = WolfireConstants()
-                ProcessSynchrotron(simu_path, LOS, FaradayRotation, responseSynchrotron, df, add_noise, SNR_nu,
-                    kernel_size_synchrotron, zeta, Geff, omegaPAH, XC, nuArray, PhiArray, PixelLength_pc, PixelLength_cm,
-                    BoxLength_pc, DistanceArray, conversionn, conversionT, conversionB; log_progress = log_progress)
-            elseif ne_option == "2"
-                ProcessSynchrotron(simu_path, LOS, FaradayRotation, responseSynchrotron, df, add_noise, SNR_nu,
-                    kernel_size_synchrotron, IonizationFraction, nuArray, PhiArray, PixelLength_pc, PixelLength_cm,
-                    BoxLength_pc, DistanceArray, conversionn, conversionT, conversionB; log_progress = log_progress)
-            else
-                ProcessSynchrotron(simu_path, LOS, FaradayRotation, responseSynchrotron, df, add_noise, SNR_nu, kernel_size_synchrotron,
-                    nuArray, PhiArray, PixelLength_pc, PixelLength_cm, BoxLength_pc, DistanceArray,
-                    conversionn, conversionT, conversionB; log_progress = log_progress)
-            end
-        end
-
-        if length(simu_paths) > 1
-            println("Finished processing all chosen LOS for simulation: $simu_name")
-            print_progress(i, length(simu_paths))
-        end
-    end
-
-    println("Finished processing all simulations.")
-
-    elapsed = now() - start_time
-    println(Crayon(foreground = :green, bold = true)("Summary:"))
-    println(Crayon(foreground = :green)("Simulations processed: $(join(map(basename, simu_paths), ", "))"))
-    println(Crayon(foreground = :green)("Lines of sight: $(join(chosen_LOS, ", "))"))
-    println(Crayon(foreground = :green)("Output directory: $base_dir"))
-    println(Crayon(foreground = :green)("Total execution time: $(format_duration(elapsed))"))
-
-    save_config(cfg, config_path)
-    write_summary_log(base_dir, map(basename, simu_paths), chosen_LOS, elapsed; config_path=config_path, faraday=FaradayRotation, responseSynchrotron=responseSynchrotron, add_noise=add_noise, interpolation_file_path=interpolation_file_path, conversionB=conversionB, conversionn=conversionn, conversionT=conversionT, ne_option=ne_option)
+    run_config, _ = build_config(cfg, config_path)
+    run_moose_processing(run_config; quiet = quiet, persisted_config = cfg)
 
     return nothing
 end
