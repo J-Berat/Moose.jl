@@ -88,6 +88,18 @@ def build_julia_args(parsed: argparse.Namespace, config_path: Path | None) -> Li
     if parsed.ne_option:
         args.extend(["--ne-option", str(parsed.ne_option)])
 
+    if parsed.zeta is not None:
+        args.extend(["--zeta", str(parsed.zeta)])
+
+    if parsed.Geff is not None:
+        args.extend(["--Geff", str(parsed.Geff)])
+
+    if parsed.phiPAH is not None:
+        args.extend(["--phiPAH", str(parsed.phiPAH)])
+
+    if parsed.XC is not None:
+        args.extend(["--XC", str(parsed.XC)])
+
     if parsed.quiet:
         args.append("--quiet")
 
@@ -300,6 +312,10 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["1", "2", "3"],
         help="Electron density prescription option (1, 2, or 3).",
     )
+    parser.add_argument("--zeta", type=float, help="Wolfire model zeta constant.")
+    parser.add_argument("--Geff", type=float, help="Wolfire model Geff constant.")
+    parser.add_argument("--phiPAH", type=float, help="Wolfire model phiPAH constant.")
+    parser.add_argument("--XC", type=float, help="Wolfire model XC constant.")
     parser.add_argument(
         "--log-file",
         help="Optional path to write a JSONL log entry for each invocation.",

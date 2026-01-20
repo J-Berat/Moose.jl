@@ -108,6 +108,22 @@ function parse_cli_args(args)
             i += 1
             i > length(args) && throw_cli_error("--ne-option expects 1, 2, or 3")
             overrides["ne_option"] = parse_ne_option(args[i])
+        elseif arg == "--zeta"
+            i += 1
+            i > length(args) && throw_cli_error("--zeta expects a value")
+            overrides["zeta"] = parse_numeric("--zeta", args[i])
+        elseif arg == "--Geff"
+            i += 1
+            i > length(args) && throw_cli_error("--Geff expects a value")
+            overrides["Geff"] = parse_numeric("--Geff", args[i])
+        elseif arg == "--phiPAH"
+            i += 1
+            i > length(args) && throw_cli_error("--phiPAH expects a value")
+            overrides["phiPAH"] = parse_numeric("--phiPAH", args[i])
+        elseif arg == "--XC"
+            i += 1
+            i > length(args) && throw_cli_error("--XC expects a value")
+            overrides["XC"] = parse_numeric("--XC", args[i])
         elseif arg == "--quiet"
             quiet = true
         else

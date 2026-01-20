@@ -208,6 +208,7 @@ struct RunConfig
     interpolation_file_path::String
     ne_option::String
     IonizationFraction::Union{Nothing, Float64}
+    wolfire_constants::Union{Nothing, NTuple{4, Float64}}
     nustart::Float64
     nuend::Float64
     dnu::Float64
@@ -233,6 +234,7 @@ struct RunConfig
         interpolation_file_path,
         ne_option,
         IonizationFraction,
+        wolfire_constants,
         nustart,
         nuend,
         dnu,
@@ -249,6 +251,12 @@ struct RunConfig
         kernel_size_synchrotron = kernel_size_synchrotron === nothing ? nothing : Int(kernel_size_synchrotron)
         SNR_nu = SNR_nu === nothing ? nothing : Float64(SNR_nu)
         IonizationFraction = IonizationFraction === nothing ? nothing : Float64(IonizationFraction)
+        wolfire_constants = wolfire_constants === nothing ? nothing : (
+            Float64(wolfire_constants[1]),
+            Float64(wolfire_constants[2]),
+            Float64(wolfire_constants[3]),
+            Float64(wolfire_constants[4]),
+        )
 
         return new(
             String(base_dir),
@@ -268,6 +276,7 @@ struct RunConfig
             String(interpolation_file_path),
             String(ne_option),
             IonizationFraction,
+            wolfire_constants,
             Float64(nustart),
             Float64(nuend),
             Float64(dnu),
@@ -279,6 +288,16 @@ struct RunConfig
 end
 
 function config_dict_from_struct(cfg::RunConfig)
+    ne_config = Dict{String, Any}("mode" => cfg.ne_option)
+    cfg.IonizationFraction !== nothing && (ne_config["ion_fraction"] = cfg.IonizationFraction)
+    if cfg.wolfire_constants !== nothing
+        zeta, Geff, phiPAH, XC = cfg.wolfire_constants
+        ne_config["zeta"] = zeta
+        ne_config["Geff"] = Geff
+        ne_config["phiPAH"] = phiPAH
+        ne_config["XC"] = XC
+    end
+
     return Dict(
         "base_dir" => cfg.base_dir,
         "chosen_simu" => cfg.simulations,
@@ -297,6 +316,7 @@ function config_dict_from_struct(cfg::RunConfig)
         "interpolation_file_path" => cfg.interpolation_file_path,
         "ne_option" => cfg.ne_option,
         "IonizationFraction" => cfg.IonizationFraction,
+        "ne" => ne_config,
         "nustart" => cfg.nustart,
         "nuend" => cfg.nuend,
         "dnu" => cfg.dnu,
@@ -320,7 +340,10 @@ function run_moose_processing(cfg::RunConfig; quiet::Bool = false, persisted_con
     end
 
     start_time = now()
-    wolfire_constants = cfg.ne_option == "1" ? WolfireConstants() : nothing
+    wolfire_constants = nothing
+    if cfg.ne_option == "1"
+        wolfire_constants = cfg.wolfire_constants === nothing ? WolfireConstants() : cfg.wolfire_constants
+    end
 
     if cfg.ne_option == "3"
         missing_cubes = [simu for simu in cfg.simulations if !isfile(joinpath(simu, "densityHp.fits"))]
@@ -614,6 +637,19 @@ function run_moose_interactive(; quiet::Bool = false, reset_config::Bool = true)
     config["ne_option"] = ne_option
 
     IonizationFraction = get(config, "IonizationFraction", nothing)
+    wolfire_constants = get(config, "wolfire_constants", nothing)
+    if wolfire_constants === nothing && haskey(config, "ne")
+        ne_config = config["ne"]
+        if ne_config isa AbstractDict &&
+                all(haskey(ne_config, key) for key in ("zeta", "Geff", "phiPAH", "XC"))
+            wolfire_constants = (
+                Float64(ne_config["zeta"]),
+                Float64(ne_config["Geff"]),
+                Float64(ne_config["phiPAH"]),
+                Float64(ne_config["XC"]),
+            )
+        end
+    end
     if ne_option == "2"
         IonizationFraction = ask_user("Enter the ionization fraction for the alternative prescription:", get(config, "IonizationFraction", 0.01))
         config["IonizationFraction"] = IonizationFraction
@@ -623,6 +659,23 @@ function run_moose_interactive(; quiet::Bool = false, reset_config::Bool = true)
             throw_config_error("Electron density cube 'densityHp.fits' is missing for: $(join(missing_cubes, ", ")).";
                 code=:missing_density_cube)
         end
+    else
+        zeta = ask_user("zeta (ionization rate by Cosmic Rays)", get(config, "zeta", 2.5e-16))
+        Geff = ask_user("Geff (effective radiation field)", get(config, "Geff", 1.0))
+        phiPAH = ask_user("phiPAH (collision rate parameter for PAH)", get(config, "phiPAH", 0.5))
+        XC = ask_user("XC (Conversion factor of H into C)", get(config, "XC", 1.4e-4))
+        wolfire_constants = (Float64(zeta), Float64(Geff), Float64(phiPAH), Float64(XC))
+        config["zeta"] = wolfire_constants[1]
+        config["Geff"] = wolfire_constants[2]
+        config["phiPAH"] = wolfire_constants[3]
+        config["XC"] = wolfire_constants[4]
+        config["ne"] = merge(get(config, "ne", Dict{String, Any}()), Dict(
+            "mode" => "1",
+            "zeta" => wolfire_constants[1],
+            "Geff" => wolfire_constants[2],
+            "phiPAH" => wolfire_constants[3],
+            "XC" => wolfire_constants[4],
+        ))
     end
 
     save_path_default = get(config, "config_path", joinpath(base_dir, "moose_config.json"))
@@ -647,6 +700,7 @@ function run_moose_interactive(; quiet::Bool = false, reset_config::Bool = true)
         interpolation_file_path,
         ne_option,
         IonizationFraction,
+        wolfire_constants,
         nustart,
         nuend,
         dnu,
