@@ -205,6 +205,7 @@ function build_config(cfg, config_path)
 
     ne_option = string(get(cfg, "ne_option", get(get(cfg, "ne", Dict()), "mode", 1)))
     IonizationFraction = get(cfg, "IonizationFraction", get(get(cfg, "ne", Dict()), "ion_fraction", 0.01))
+    wolfire_constants = collect_wolfire_constants(cfg)
 
     BoxLength_pc, BoxLength_pix = build_distance_parameters(cfg)
     nustart, nuend, dnu = build_frequency_array(cfg)
@@ -228,6 +229,7 @@ function build_config(cfg, config_path)
         interpolation_file_path,
         ne_option,
         IonizationFraction,
+        wolfire_constants,
         nustart,
         nuend,
         dnu,
@@ -235,6 +237,26 @@ function build_config(cfg, config_path)
         BoxLength_pix,
         config_path,
     ), simu_paths
+end
+
+function collect_wolfire_constants(cfg)
+    ne_cfg = get(cfg, "ne", nothing)
+    zeta = ne_cfg isa AbstractDict ? get(ne_cfg, "zeta", get(cfg, "zeta", nothing)) : get(cfg, "zeta", nothing)
+    Geff = ne_cfg isa AbstractDict ? get(ne_cfg, "Geff", get(cfg, "Geff", nothing)) : get(cfg, "Geff", nothing)
+    phiPAH = ne_cfg isa AbstractDict ? get(ne_cfg, "phiPAH", get(cfg, "phiPAH", nothing)) : get(cfg, "phiPAH", nothing)
+    XC = ne_cfg isa AbstractDict ? get(ne_cfg, "XC", get(cfg, "XC", nothing)) : get(cfg, "XC", nothing)
+
+    values = (zeta, Geff, phiPAH, XC)
+    all_missing = all(value === nothing for value in values)
+    any_missing = any(value === nothing for value in values)
+
+    if all_missing
+        return nothing
+    elseif any_missing
+        throw_config_error("Wolfire constants must include zeta, Geff, phiPAH, and XC when provided."; code=:invalid_wolfire_constants)
+    end
+
+    return (Float64(zeta), Float64(Geff), Float64(phiPAH), Float64(XC))
 end
 
 function MOOSE_from_config(config_path::AbstractString; quiet::Bool = false)
