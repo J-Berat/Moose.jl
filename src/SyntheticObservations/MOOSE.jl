@@ -215,6 +215,7 @@ struct RunConfig
     BoxLength_pc::Float64
     BoxLength_pix::Int
     config_path::String
+    log_progress::Bool
 
     function RunConfig(
         base_dir,
@@ -241,6 +242,7 @@ struct RunConfig
         BoxLength_pc,
         BoxLength_pix,
         config_path,
+        log_progress=true,
     )
         faraday_flag = uppercase(faraday_rotation)
         response_flag = uppercase(responseSynchrotron)
@@ -283,6 +285,7 @@ struct RunConfig
             Float64(BoxLength_pc),
             Int(BoxLength_pix),
             String(config_path),
+            Bool(log_progress),
         )
     end
 end
@@ -323,6 +326,7 @@ function config_dict_from_struct(cfg::RunConfig)
         "BoxLength_pc" => cfg.BoxLength_pc,
         "BoxLength_pix" => cfg.BoxLength_pix,
         "config_path" => cfg.config_path,
+        "log_progress" => cfg.log_progress,
     )
 end
 
@@ -353,6 +357,14 @@ function run_moose_processing(cfg::RunConfig; quiet::Bool = false, persisted_con
         )
     end
 
+    wolfire_constants = nothing
+    ion_fraction = nothing
+    if cfg.ne_option == "1"
+        wolfire_constants = WolfireConstants()
+    elseif cfg.ne_option == "2"
+        ion_fraction = cfg.IonizationFraction === nothing ? 0.01 : cfg.IonizationFraction
+    end
+
     for (i, simu) in enumerate(cfg.simulations)
         println("Processing Simulation: $(simu)")
 
@@ -363,16 +375,18 @@ function run_moose_processing(cfg::RunConfig; quiet::Bool = false, persisted_con
                 zeta, Geff, omegaPAH, XC = wolfire_constants
                 ProcessSynchrotron(simu, LOS, cfg.faraday_rotation, cfg.responseSynchrotron, df, cfg.add_noise, cfg.SNR_nu,
                     cfg.kernel_size_synchrotron, zeta, Geff, omegaPAH, XC, nuArray, PhiArray, PixelLength_pc, PixelLength_cm,
-                    cfg.BoxLength_pc, DistanceArray, cfg.conversionn, cfg.conversionT, cfg.conversionB)
+                    cfg.BoxLength_pc, DistanceArray, cfg.conversionn, cfg.conversionT, cfg.conversionB;
+                    log_progress = cfg.log_progress)
             elseif cfg.ne_option == "2"
-                ion_fraction = cfg.IonizationFraction === nothing ? 0.01 : cfg.IonizationFraction
                 ProcessSynchrotron(simu, LOS, cfg.faraday_rotation, cfg.responseSynchrotron, df, cfg.add_noise, cfg.SNR_nu,
                     cfg.kernel_size_synchrotron, ion_fraction, nuArray, PhiArray, PixelLength_pc, PixelLength_cm,
-                    cfg.BoxLength_pc, DistanceArray, cfg.conversionn, cfg.conversionT, cfg.conversionB)
+                    cfg.BoxLength_pc, DistanceArray, cfg.conversionn, cfg.conversionT, cfg.conversionB;
+                    log_progress = cfg.log_progress)
             else
                 ProcessSynchrotron(simu, LOS, cfg.faraday_rotation, cfg.responseSynchrotron, df, cfg.add_noise, cfg.SNR_nu,
                     cfg.kernel_size_synchrotron, nuArray, PhiArray, PixelLength_pc, PixelLength_cm,
-                    cfg.BoxLength_pc, DistanceArray, cfg.conversionn, cfg.conversionT, cfg.conversionB)
+                    cfg.BoxLength_pc, DistanceArray, cfg.conversionn, cfg.conversionT, cfg.conversionB;
+                    log_progress = cfg.log_progress)
             end
         end
 
@@ -707,6 +721,7 @@ function run_moose_interactive(; quiet::Bool = false, reset_config::Bool = true)
         BoxLength_pc,
         BoxLength_pix,
         config_path,
+        get(config, "log_progress", true),
     )
 
     return cfg, config

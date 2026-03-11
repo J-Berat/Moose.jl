@@ -22,6 +22,7 @@ end
 function parse_cli_args(args)
     config_path = nothing
     quiet = false
+    write_back = false
     overrides = Dict{String, Any}()
     simulations = String[]
     los_values = String[]
@@ -126,6 +127,8 @@ function parse_cli_args(args)
             overrides["XC"] = parse_numeric("--XC", args[i])
         elseif arg == "--quiet"
             quiet = true
+        elseif arg == "--write-back"
+            write_back = true
         else
             if !startswith(arg, "--") && config_path === nothing
                 config_path = arg
@@ -140,7 +143,9 @@ function parse_cli_args(args)
     isempty(los_values) || (overrides["chosen_LOS"] = los_values)
     interpolation_file === nothing || (overrides["interpolation_file_path"] = interpolation_file)
 
-    return config_path, quiet, overrides
+    write_back && config_path === nothing && error("--write-back requires a config path (positional or via --config).")
+
+    return config_path, quiet, write_back, overrides
 end
 
 function load_base_config(config_path)
@@ -151,10 +156,10 @@ function load_base_config(config_path)
     end
 end
 
-function run_with_config(config_path, quiet, overrides)
+function run_with_config(config_path, quiet, write_back, overrides)
     cfg = merge(load_base_config(config_path), overrides)
 
-    if config_path === nothing
+    if config_path === nothing || !write_back
         mktemp(; cleanup = false) do path, io
             try
                 write(io, JSON.json(cfg))
@@ -175,8 +180,8 @@ end
 
 if abspath(PROGRAM_FILE) == @__FILE__
     try
-        config_path, quiet, overrides = parse_cli_args(ARGS)
-        run_with_config(config_path, quiet, overrides)
+        config_path, quiet, write_back, overrides = parse_cli_args(ARGS)
+        run_with_config(config_path, quiet, write_back, overrides)
     catch err
         if err isa MooseError
             println(stderr, err.message)

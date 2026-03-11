@@ -7,7 +7,8 @@ using Dates
 using JSON
 
 using ..MOOSE: PARSEC_TO_CM, RunConfig, ValidationResult, ensure_directory_access,
-               run_moose_processing, throw_config_error, validation_failure, validation_success
+               ensure_readable_file, run_moose_processing, throw_config_error,
+               validation_failure, validation_success
 
 function normalize_base_dir(cfg, config_path)
     raw_dir = get(cfg, "base_dir") do
@@ -61,6 +62,7 @@ function collect_simulations(cfg, base_dir, config_path)
     if !isempty(errors)
         return validation_failure(Vector{String}, join(errors, "\n"))
     end
+    isempty(paths) && return validation_failure(Vector{String}, "Config file $(config_path) must reference at least one simulation.")
 
     return validation_success(paths)
 end
@@ -76,6 +78,35 @@ function collect_los(cfg)
         throw_config_error("Invalid line(s) of sight: $(join(invalid, ", ")). Allowed values are x, y, or z."; code=:invalid_los)
 
     return normalized
+end
+
+function normalize_yes_no_flag(value, field_name)
+    if value isa Bool
+        return value ? "Y" : "N"
+    end
+
+    normalized = uppercase(strip(String(value)))
+    if normalized in ("Y", "YES", "TRUE", "1")
+        return "Y"
+    elseif normalized in ("N", "NO", "FALSE", "0")
+        return "N"
+    end
+
+    error("`$(field_name)` must be one of Y/N (or true/false). Got: $(value)")
+end
+
+function validate_positive_finite(value, field_name)
+    numeric_value = Float64(value)
+    isfinite(numeric_value) || error("`$(field_name)` must be finite. Got: $(value)")
+    numeric_value > 0 || error("`$(field_name)` must be > 0. Got: $(value)")
+    return numeric_value
+end
+
+function validate_nonnegative_finite(value, field_name)
+    numeric_value = Float64(value)
+    isfinite(numeric_value) || error("`$(field_name)` must be finite. Got: $(value)")
+    numeric_value >= 0 || error("`$(field_name)` must be >= 0. Got: $(value)")
+    return numeric_value
 end
 
 function build_frequency_array(cfg)
@@ -183,14 +214,18 @@ function build_config(cfg, config_path)
     simu_paths_result.error === nothing || throw_config_error(simu_paths_result.error; code=:missing_simulation)
     simu_paths = simu_paths_result.value
 
-    chosen_LOS = collect_los(cfg)
-    conversionB = get(cfg, "conversionB", 1.0)
-    conversionn = get(cfg, "conversionn", 1.0)
-    conversionT = get(cfg, "conversionT", 1.0)
-    log_progress = get(cfg, "log_progress", false)
-    responseSynchrotron = uppercase(get(cfg, "responseSynchrotron", "N"))
+    chosen_LOS = map(x -> lowercase(String(x)), collect_los(cfg))
+    isempty(chosen_LOS) && error("`chosen_LOS` must contain at least one value among x, y, z.")
+    invalid_los = [los for los in chosen_LOS if !(los in ("x", "y", "z"))]
+    isempty(invalid_los) || error("`chosen_LOS` contains invalid values: $(join(invalid_los, ", ")). Allowed values: x, y, z.")
+
+    conversionB = validate_positive_finite(get(cfg, "conversionB", 1.0), "conversionB")
+    conversionn = validate_positive_finite(get(cfg, "conversionn", 1.0), "conversionn")
+    conversionT = validate_positive_finite(get(cfg, "conversionT", 1.0), "conversionT")
+    log_progress = get(cfg, "log_progress", true)
+    responseSynchrotron = normalize_yes_no_flag(get(cfg, "responseSynchrotron", "N"), "responseSynchrotron")
     kernel_size_synchrotron = get(cfg, "kernel_size_synchrotron", nothing)
-    add_noise = uppercase(get(cfg, "add_noise", "N"))
+    add_noise = normalize_yes_no_flag(get(cfg, "add_noise", "N"), "add_noise")
     SNR_nu = get(cfg, "SNR_nu", nothing)
 
     interpolation_file_path = get(cfg, "interpolation_file_path") do
@@ -202,14 +237,46 @@ function build_config(cfg, config_path)
         code=:missing_interpolation_path,
     )
     interpolation_file_path = isabspath(interpolation_file_path) ? interpolation_file_path : joinpath(base_dir, interpolation_file_path)
+    interpolation_validation = ensure_readable_file(interpolation_file_path)
+    interpolation_validation === nothing || error(interpolation_validation)
 
     ne_option = string(get(cfg, "ne_option", get(get(cfg, "ne", Dict()), "mode", 1)))
     IonizationFraction = get(cfg, "IonizationFraction", get(get(cfg, "ne", Dict()), "ion_fraction", 0.01))
     wolfire_constants = collect_wolfire_constants(cfg)
 
     BoxLength_pc, BoxLength_pix = build_distance_parameters(cfg)
+    BoxLength_pc = validate_positive_finite(BoxLength_pc, "BoxLength_pc")
+    BoxLength_pix > 0 || error("`BoxLength_pix` must be > 0. Got: $(BoxLength_pix)")
+
     nustart, nuend, dnu = build_frequency_array(cfg)
+    nustart = validate_positive_finite(nustart, "nustart")
+    nuend = validate_positive_finite(nuend, "nuend")
+    dnu = validate_positive_finite(dnu, "dnu")
+    nuend > nustart || error("`nuend` must be strictly greater than `nustart`.")
+
     FaradayRotation, phimin, phimax, dphi = build_faraday(cfg)
+    FaradayRotation = normalize_yes_no_flag(FaradayRotation, "FaradayRotation")
+    dphi = validate_positive_finite(dphi, "dphi")
+    phimax > phimin || error("`phimax` must be strictly greater than `phimin`.")
+
+    ne_option in ("1", "2", "3") || error("`ne_option` must be one of \"1\", \"2\", or \"3\".")
+    if ne_option == "2"
+        IonizationFraction = validate_nonnegative_finite(IonizationFraction, "IonizationFraction")
+        IonizationFraction <= 1.0 || error("`IonizationFraction` must be <= 1.0.")
+    end
+
+    if responseSynchrotron == "Y"
+        kernel_size_synchrotron === nothing && error("`kernel_size_synchrotron` is required when `responseSynchrotron` is enabled.")
+        kernel_size_synchrotron = Int(kernel_size_synchrotron)
+        kernel_size_synchrotron > 0 || error("`kernel_size_synchrotron` must be > 0.")
+    end
+
+    if add_noise == "Y"
+        SNR_nu === nothing && error("`SNR_nu` is required when `add_noise` is enabled.")
+        SNR_nu = validate_positive_finite(SNR_nu, "SNR_nu")
+    elseif SNR_nu !== nothing
+        SNR_nu = validate_positive_finite(SNR_nu, "SNR_nu")
+    end
 
     return RunConfig(
         base_dir,
@@ -236,6 +303,7 @@ function build_config(cfg, config_path)
         BoxLength_pc,
         BoxLength_pix,
         config_path,
+        log_progress,
     ), simu_paths
 end
 

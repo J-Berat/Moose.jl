@@ -103,6 +103,9 @@ def build_julia_args(parsed: argparse.Namespace, config_path: Path | None) -> Li
     if parsed.quiet:
         args.append("--quiet")
 
+    if parsed.write_back:
+        args.append("--write-back")
+
     return args
 
 
@@ -150,6 +153,8 @@ def validate_args(parser: argparse.ArgumentParser, parsed: argparse.Namespace) -
     config_path = resolve_config_path(parsed)
     if config_path and not config_path.exists():
         parser.error(f"Config file not found: {config_path}")
+    if parsed.write_back and config_path is None:
+        parser.error("--write-back requires a config file path (positional or --config).")
 
     if parsed.filtering and parsed.filtering.upper() == "Y" and parsed.kernel_size is None:
         parser.error("--kernel-size is required when enabling filtering.")
@@ -264,6 +269,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--dry-run",
         action="store_true",
         help="Print the Julia command and exit without invoking Julia.",
+    )
+    parser.add_argument(
+        "--write-back",
+        action="store_true",
+        help="Persist merged CLI overrides into the provided config file.",
     )
 
     parser.add_argument("--base-dir", help="Base directory containing the simulations.")

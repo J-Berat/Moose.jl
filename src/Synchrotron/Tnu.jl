@@ -27,30 +27,43 @@ PixelLength_cm = 1.0
 T_nu = Tnu(Bperp, nuArray, df, PixelLength_cm)
 """
 
-function Tnu(Bperp, nuArray, df, PixelLength_cm)
-    
-    B = unique(df.B)
-    nu = unique(df.nu)
-    eps = reshape(df.e_para .+ df.e_perp , (size(nu,1), size(B,1)))
-   
-    # 2D interpolation function 
+struct TemperatureInterpolator
+    B::Vector{Float64}
+    eps_interp::Spline2D
+end
+
+function TemperatureInterpolator(df::DataFrame)
+    B = collect(unique(df.B))
+    nu = collect(unique(df.nu))
+    eps = reshape(df.e_para .+ df.e_perp, (length(nu), length(B)))
     eps_interp = Spline2D(B, nu, eps)
-    
-    # create T_nu
+    return TemperatureInterpolator(B, eps_interp)
+end
+
+function emissivity_total_at_frequency!(buffer, B::Vector{Float64}, eps_interp::Spline2D, Bperp::AbstractArray, nui)
+    eps_i = @. eps_interp(B, nui)
+    eps_i_interp = linear_interpolation(B, eps_i, extrapolation_bc = Line())
+    buffer .= @. eps_i_interp(Bperp)
+    return buffer
+end
+
+function Tnu(Bperp, nuArray, df, PixelLength_cm; precomputed_interp = nothing)
+    interpolator = precomputed_interp === nothing ? TemperatureInterpolator(df) : precomputed_interp
     Nfreq = length(nuArray)
     T_nu = zeros(Nfreq)
+    eps_buffer = similar(Bperp, Float64)
 
-    # Tnu computation       
-    Threads.@threads for i in 1:Nfreq
+    # Tnu computation
+    for i in 1:Nfreq
         nui = nuArray[i]
-        eps_i = @. eps_interp(B, nui)  # interpolation vector at nui frequency 
-        eps_i_interp = linear_interpolation(B, eps_i, extrapolation_bc=Line()) # 1D interpolation function
-        eps_i = @. eps_i_interp(Bperp)  # interpolate only on B over the full cube
-        Inui = sum(eps_i) .* PixelLength_cm
-        T_nu[i] = BrightnessTemperature(nui,Inui)
+
+        emissivity_total_at_frequency!(eps_buffer, interpolator.B, interpolator.eps_interp, Bperp, nui)
+
+        Inui = sum(eps_buffer) .* PixelLength_cm
+        T_nu[i] = BrightnessTemperature(nui, Inui)
     end
     return T_nu
-    
+
 end
 
 """
@@ -83,14 +96,15 @@ T_nu = Tnu3D(Bperpcube, nuArray, df, PixelLength_cm)
 """
 
 function Tnu3D(Bperpcube, nuArray, df, PixelLength_cm)
-    
+    nx, ny = size(Bperpcube, 1), size(Bperpcube, 2)
     Nfreq = length(nuArray)
-    T_nu = zeros(size(Bperpcube,1), size(Bperpcube,2), Nfreq)
-    
-    Threads.@threads for i = 1:size(T_nu,1)
-        Threads.@threads for j = 1:size(T_nu,2)
-            T_nu[i,j,:] = Tnu(Bperpcube[i,j,:], nuArray, df, PixelLength_cm)
-        end
+    T_nu = zeros(nx, ny, Nfreq)
+    interpolator = TemperatureInterpolator(df)
+
+    Threads.@threads for idx in CartesianIndices((1:nx, 1:ny))
+        i, j = idx[1], idx[2]
+        @views T_nu[i, j, :] = Tnu(Bperpcube[i, j, :], nuArray, df, PixelLength_cm; precomputed_interp = interpolator)
     end
+
     return T_nu
 end

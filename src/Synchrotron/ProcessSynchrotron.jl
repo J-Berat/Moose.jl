@@ -41,7 +41,7 @@ function ProcessSynchrotron(simu::AbstractString, LOS, FaradayRotation::Abstract
     println("-------------------------------------------")
     println(Crayon(foreground=:blue, bold=true)("Computing electron density"))
     ne = Wolfire_ne(zeta, Geff, omegaPAH, XC, T, n)
-    WriteData3D(resultspath, ne, "ne", los_distance_array)
+    WriteData3D(resultspath, ne, "ne", los_distance_array; ensure_path=false)
 
     # Compute integral of quantities
     println("-------------------------------------------")
@@ -59,14 +59,14 @@ function ProcessSynchrotron(simu::AbstractString, LOS, FaradayRotation::Abstract
     B1 = nothing
     B2 = nothing
     
-    WriteData2D(resultspath, intBtotal, "intBtotal")
-    WriteData2D(resultspath, sigmaBtotal, "sigmaBtotal")
-    WriteData2D(resultspath, Ne, "intne")
-    WriteData2D(resultspath, sigmane, "sigmane")
-    WriteData2D(resultspath, sigmaT, "sigmaT")
-    WriteData2D(resultspath, intBLOS, "intBLOS")
-    WriteData2D(resultspath, sigmaBLOS, "sigmaBLOS")
-    WriteData2D(resultspath, intBperp, "intBperp")
+    WriteData2D(resultspath, intBtotal, "intBtotal"; ensure_path=false)
+    WriteData2D(resultspath, sigmaBtotal, "sigmaBtotal"; ensure_path=false)
+    WriteData2D(resultspath, Ne, "intne"; ensure_path=false)
+    WriteData2D(resultspath, sigmane, "sigmane"; ensure_path=false)
+    WriteData2D(resultspath, sigmaT, "sigmaT"; ensure_path=false)
+    WriteData2D(resultspath, intBLOS, "intBLOS"; ensure_path=false)
+    WriteData2D(resultspath, sigmaBLOS, "sigmaBLOS"; ensure_path=false)
+    WriteData2D(resultspath, intBperp, "intBperp"; ensure_path=false)
 
     # Faraday rotation
     if faraday_enabled
@@ -78,7 +78,7 @@ function ProcessSynchrotron(simu::AbstractString, LOS, FaradayRotation::Abstract
         RMcube = RM(dRM)
         RMmap = RMcube[:, :, end]
         BLOS = nothing
-        WriteData2D(resultspath, RMmap, "RMmap")
+        WriteData2D(resultspath, RMmap, "RMmap"; ensure_path=false)
     else
         resultspath = joinpath(resultspath, "noFaraday")
         mkpath(resultspath)
@@ -89,11 +89,11 @@ function ProcessSynchrotron(simu::AbstractString, LOS, FaradayRotation::Abstract
     if faraday_enabled
         println("-------------------------------------------")
         println(Crayon(foreground=:blue, bold=true)("Computing Qnu and Unu with Faraday rotation"))
-        Qnu, Unu = QUnu3D(Bperpcube, psi_src, RMcube, nuArray, df, los_pixel_length_cm)
+        Qnu, Unu = QUnu3D(Bperpcube, psi_src, RMcube, nuArray, df, los_pixel_length_cm; log_progress = log_progress)
     else
         println("-------------------------------------------")
         println(Crayon(foreground=:blue, bold=true)("Computing Qnu and Unu without Faraday rotation"))
-        Qnu, Unu = QUnuNoFaraday3D(Bperpcube, psi_src, nuArray, df, los_pixel_length_cm)
+        Qnu, Unu = QUnuNoFaraday3D(Bperpcube, psi_src, nuArray, df, los_pixel_length_cm; log_progress = log_progress)
     end
     T_nu = Tnu3D(Bperpcube, nuArray, df, los_pixel_length_cm)
     Bperpcube = nothing
@@ -128,27 +128,26 @@ function ProcessSynchrotron(simu::AbstractString, LOS, FaradayRotation::Abstract
         end
     end
 
-    WriteData3D(resultspath, Qnu, "Qnu", nuArray)
-    WriteData3D(resultspath, Unu, "Unu", nuArray)
-    WriteData3D(resultspath, T_nu, "T_nu", nuArray)
+    WriteQUnu3D(resultspath, Qnu, Unu, nuArray; ensure_path=false)
+    WriteData3D(resultspath, T_nu, "T_nu", nuArray; ensure_path=false)
     mv(joinpath(resultspath, "T_nu.fits"), joinpath(resultspath, "Tnu.fits"),force=true)  # Rename file
     
     println("-------------------------------------------")
     println(Crayon(foreground=:blue, bold=true)("Computing Pnu and Pnumax"))
     Pnucube = Pnu(Qnu, Unu)
     Pnumax = maxCube(Pnucube)
-    WriteData3D(resultspath, Pnucube, "Pnu", nuArray)
-    WriteData2D(resultspath, Pnumax, "Pnumax")
+    WriteData3D(resultspath, Pnucube, "Pnu", nuArray; ensure_path=false)
+    WriteData2D(resultspath, Pnumax, "Pnumax"; ensure_path=false)
 
     if faraday_enabled
         println("-------------------------------------------")
         println(Crayon(foreground=:red, bold=true)("Performing RMsynthesis"))
         FDF, realFDF, imagFDF = RMSynthesis(Qnu, Unu, nuArray * 1e6, PhiArray; log_progress = log_progress)
         Pmax = maxCube(FDF)
-        WriteData3D(resultspath, FDF, "FDF", PhiArray)
-        WriteData3D(resultspath, realFDF, "realFDF", PhiArray)
-        WriteData3D(resultspath, imagFDF, "imagFDF", PhiArray)
-        WriteData2D(resultspath, Pmax, "Pmax")
+        WriteData3D(resultspath, FDF, "FDF", PhiArray; ensure_path=false)
+        WriteData3D(resultspath, realFDF, "realFDF", PhiArray; ensure_path=false)
+        WriteData3D(resultspath, imagFDF, "imagFDF", PhiArray; ensure_path=false)
+        WriteData2D(resultspath, Pmax, "Pmax"; ensure_path=false)
     else
         println("No Faraday tomography performed.")
     end
@@ -184,7 +183,7 @@ function ProcessSynchrotron(simu::String, LOS, FaradayRotation::String, response
     println("-------------------------------------------")
     println("Computing electron density")
     ne = ne_propto_nH(n, IonizationFraction)
-    WriteData3D(resultspath, ne, "ne", los_distance_array)
+    WriteData3D(resultspath, ne, "ne", los_distance_array; ensure_path=false)
 
     # Compute integral of quantities
     println("-------------------------------------------")
@@ -202,14 +201,14 @@ function ProcessSynchrotron(simu::String, LOS, FaradayRotation::String, response
     B1 = nothing
     B2 = nothing
     
-    WriteData2D(resultspath, intBtotal, "intBtotal")
-    WriteData2D(resultspath, sigmaBtotal, "sigmaBtotal")
-    WriteData2D(resultspath, Ne, "intne")
-    WriteData2D(resultspath, sigmane, "sigmane")
-    WriteData2D(resultspath, sigmaT, "sigmaT")
-    WriteData2D(resultspath, intBLOS, "intBLOS")
-    WriteData2D(resultspath, sigmaBLOS, "sigmaBLOS")
-    WriteData2D(resultspath, intBperp, "intBperp")
+    WriteData2D(resultspath, intBtotal, "intBtotal"; ensure_path=false)
+    WriteData2D(resultspath, sigmaBtotal, "sigmaBtotal"; ensure_path=false)
+    WriteData2D(resultspath, Ne, "intne"; ensure_path=false)
+    WriteData2D(resultspath, sigmane, "sigmane"; ensure_path=false)
+    WriteData2D(resultspath, sigmaT, "sigmaT"; ensure_path=false)
+    WriteData2D(resultspath, intBLOS, "intBLOS"; ensure_path=false)
+    WriteData2D(resultspath, sigmaBLOS, "sigmaBLOS"; ensure_path=false)
+    WriteData2D(resultspath, intBperp, "intBperp"; ensure_path=false)
 
     # Faraday rotation
     if faraday_enabled
@@ -221,7 +220,7 @@ function ProcessSynchrotron(simu::String, LOS, FaradayRotation::String, response
         RMcube = RM(dRM)
         RMmap = RMcube[:, :, end]
         BLOS = nothing
-        WriteData2D(resultspath, RMmap, "RMmap")
+        WriteData2D(resultspath, RMmap, "RMmap"; ensure_path=false)
     else
         resultspath = joinpath(resultspath, "noFaraday")
         mkpath(resultspath)
@@ -232,11 +231,11 @@ function ProcessSynchrotron(simu::String, LOS, FaradayRotation::String, response
     if faraday_enabled
         println("-------------------------------------------")
         println("Computing Qnu and Unu with Faraday rotation")
-        Qnu, Unu = QUnu3D(Bperpcube, psi_src, RMcube, nuArray, df, los_pixel_length_cm)
+        Qnu, Unu = QUnu3D(Bperpcube, psi_src, RMcube, nuArray, df, los_pixel_length_cm; log_progress = log_progress)
     else
         println("-------------------------------------------")
         println("Computing Qnu and Unu without Faraday rotation")
-        Qnu, Unu = QUnuNoFaraday3D(Bperpcube, psi_src, nuArray, df, los_pixel_length_cm)
+        Qnu, Unu = QUnuNoFaraday3D(Bperpcube, psi_src, nuArray, df, los_pixel_length_cm; log_progress = log_progress)
     end
     T_nu = Tnu3D(Bperpcube, nuArray, df, los_pixel_length_cm)
     Bperpcube = nothing
@@ -272,17 +271,16 @@ function ProcessSynchrotron(simu::String, LOS, FaradayRotation::String, response
         end
     end
 
-    WriteData3D(resultspath, Qnu, "Qnu", nuArray)
-    WriteData3D(resultspath, Unu, "Unu", nuArray)
-    WriteData3D(resultspath, T_nu, "T_nu", nuArray)
+    WriteQUnu3D(resultspath, Qnu, Unu, nuArray; ensure_path=false)
+    WriteData3D(resultspath, T_nu, "T_nu", nuArray; ensure_path=false)
     mv(joinpath(resultspath, "T_nu.fits"), joinpath(resultspath, "Tnu.fits"),force=true)  # Rename file
     
     println("-------------------------------------------")
     println("Computing Pnu and Pnumax")
     Pnucube = Pnu(Qnu, Unu)
     Pnumax = maxCube(Pnucube)
-    WriteData3D(resultspath, Pnucube, "Pnu", nuArray)
-    WriteData2D(resultspath, Pnumax, "Pnumax")
+    WriteData3D(resultspath, Pnucube, "Pnu", nuArray; ensure_path=false)
+    WriteData2D(resultspath, Pnumax, "Pnumax"; ensure_path=false)
 end
 
 
@@ -330,14 +328,14 @@ function ProcessSynchrotron(simu::String, LOS, FaradayRotation::String, response
     B1 = nothing
     B2 = nothing
     
-    WriteData2D(resultspath, intBtotal, "intBtotal")
-    WriteData2D(resultspath, sigmaBtotal, "sigmaBtotal")
-    WriteData2D(resultspath, Ne, "intne")
-    WriteData2D(resultspath, sigmane, "sigmane")
-    WriteData2D(resultspath, sigmaT, "sigmaT")
-    WriteData2D(resultspath, intBLOS, "intBLOS")
-    WriteData2D(resultspath, sigmaBLOS, "sigmaBLOS")
-    WriteData2D(resultspath, intBperp, "intBperp")
+    WriteData2D(resultspath, intBtotal, "intBtotal"; ensure_path=false)
+    WriteData2D(resultspath, sigmaBtotal, "sigmaBtotal"; ensure_path=false)
+    WriteData2D(resultspath, Ne, "intne"; ensure_path=false)
+    WriteData2D(resultspath, sigmane, "sigmane"; ensure_path=false)
+    WriteData2D(resultspath, sigmaT, "sigmaT"; ensure_path=false)
+    WriteData2D(resultspath, intBLOS, "intBLOS"; ensure_path=false)
+    WriteData2D(resultspath, sigmaBLOS, "sigmaBLOS"; ensure_path=false)
+    WriteData2D(resultspath, intBperp, "intBperp"; ensure_path=false)
 
     # Faraday rotation
     if faraday_enabled
@@ -348,7 +346,7 @@ function ProcessSynchrotron(simu::String, LOS, FaradayRotation::String, response
         RMcube = RM(dRM)
         RMmap = RMcube[:, :, end]
         BLOS = nothing
-        WriteData2D(resultspath, RMmap, "RMmap")
+        WriteData2D(resultspath, RMmap, "RMmap"; ensure_path=false)
     else
         resultspath = joinpath(resultspath, "noFaraday")
         mkpath(resultspath)
@@ -359,11 +357,11 @@ function ProcessSynchrotron(simu::String, LOS, FaradayRotation::String, response
     if faraday_enabled
         println("-------------------------------------------")
         println("Computing Qnu and Unu with Faraday rotation")
-        Qnu, Unu = QUnu3D(Bperpcube, psi_src, RMcube, nuArray, df, los_pixel_length_cm)
+        Qnu, Unu = QUnu3D(Bperpcube, psi_src, RMcube, nuArray, df, los_pixel_length_cm; log_progress = log_progress)
     else
         println("-------------------------------------------")
         println("Computing Qnu and Unu without Faraday rotation")
-        Qnu, Unu = QUnuNoFaraday3D(Bperpcube, psi_src, nuArray, df, los_pixel_length_cm)
+        Qnu, Unu = QUnuNoFaraday3D(Bperpcube, psi_src, nuArray, df, los_pixel_length_cm; log_progress = log_progress)
     end
     T_nu = Tnu3D(Bperpcube, nuArray, df, los_pixel_length_cm)
     Bperpcube = nothing
@@ -398,27 +396,26 @@ function ProcessSynchrotron(simu::String, LOS, FaradayRotation::String, response
         end
     end
 
-    WriteData3D(resultspath, Qnu, "Qnu", nuArray)
-    WriteData3D(resultspath, Unu, "Unu", nuArray)
-    WriteData3D(resultspath, T_nu, "T_nu", nuArray)
+    WriteQUnu3D(resultspath, Qnu, Unu, nuArray; ensure_path=false)
+    WriteData3D(resultspath, T_nu, "T_nu", nuArray; ensure_path=false)
     mv(joinpath(resultspath, "T_nu.fits"), joinpath(resultspath, "Tnu.fits"),force=true)  # Rename file
 
     println("-------------------------------------------")
     println("Computing Pnu and Pnumax")
     Pnucube = Pnu(Qnu, Unu)
     Pnumax = maxCube(Pnucube)
-    WriteData3D(resultspath, Pnucube, "Pnu", nuArray)
-    WriteData2D(resultspath, Pnumax, "Pnumax")
+    WriteData3D(resultspath, Pnucube, "Pnu", nuArray; ensure_path=false)
+    WriteData2D(resultspath, Pnumax, "Pnumax"; ensure_path=false)
 
     if faraday_enabled
         println("-------------------------------------------")
         println("Performing RMsynthesis")
         FDF, realFDF, imagFDF = RMSynthesis(Qnu, Unu, nuArray * 1e6, PhiArray; log_progress = log_progress)
         Pmax = maxCube(FDF)
-        WriteData3D(resultspath, FDF, "FDF", PhiArray)
-        WriteData3D(resultspath, realFDF, "realFDF", PhiArray)
-        WriteData3D(resultspath, imagFDF, "imagFDF", PhiArray)
-        WriteData2D(resultspath, Pmax, "Pmax")
+        WriteData3D(resultspath, FDF, "FDF", PhiArray; ensure_path=false)
+        WriteData3D(resultspath, realFDF, "realFDF", PhiArray; ensure_path=false)
+        WriteData3D(resultspath, imagFDF, "imagFDF", PhiArray; ensure_path=false)
+        WriteData2D(resultspath, Pmax, "Pmax"; ensure_path=false)
     else
         println("No Faraday tomography performed.")
     end

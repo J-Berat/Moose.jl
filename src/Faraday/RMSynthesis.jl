@@ -33,6 +33,7 @@ absF, realF, imagF = RMSynthesis(Q, U, nuArray, PhiArray)
 absF = [...]
 realF = [...]
 imagF = [...]
+```
 """
 
 function RMSynthesis(Q::AbstractArray, U::AbstractArray, nuArray::AbstractArray, PhiArray::AbstractArray; log_progress::Bool = false)
@@ -44,9 +45,8 @@ function RMSynthesis(Q::AbstractArray, U::AbstractArray, nuArray::AbstractArray,
     nPhi = length(PhiArray)
     nLambda = length(LambdaSqArray)
     nDims = length(size(Q))
-    
-    WeightArray = ones(nLambda)
-    K = 1.0 / sum(WeightArray)
+
+    K = 1.0 / nLambda
 
     if nDims == 1
         Q = reshape(Q, (1,1,size(Q,1)))
@@ -56,24 +56,31 @@ function RMSynthesis(Q::AbstractArray, U::AbstractArray, nuArray::AbstractArray,
         U = reshape(U, (1,size(U,1), size(U,2)))
     end
 
-    P = @. (Q + 1im * U) * WeightArray[[CartesianIndex()],[CartesianIndex()],:]
+    P = @. (Q + 1im * U)
 
     nx, ny = size(Q,1), size(Q,2)
-    
-    Lambda0Sq = K .* sum(WeightArray .* LambdaSqArray)
+
+    Lambda0Sq = sum(LambdaSqArray) * K
     a = (LambdaSqArray .- Lambda0Sq)
 
-    F = complex(zeros(nx,ny,nPhi))
-    arg = complex(zeros(nPhi))
-    
+    F = Matrix{ComplexF64}(undef, nx * ny, nPhi)
+    Pmat = reshape(P, nx * ny, nLambda)
+    phase = Vector{ComplexF64}(undef, nLambda)
+
     for i in 1:nPhi
-        arg = exp.((-2.0im .* PhiArray[i]) .* a)[[CartesianIndex()],[CartesianIndex()],:]
-        F[:,:,i] = K .* sum(P .* arg, dims=3)
+        phi = Float64(PhiArray[i])
+        @inbounds for l in eachindex(a)
+            phase[l] = cis(-2.0 * phi * a[l])
+        end
+
+        LinearAlgebra.mul!(view(F, :, i), Pmat, phase, K, 0.0)
         if log_progress
             print_progress(i, nPhi)
             @debug "RM synthesis accumulation" idx = i total = nPhi
         end
     end
+
+    F = reshape(F, nx, ny, nPhi)
     
     if nDims == 1
         F = dropdims(dropdims(F,dims=1),dims=1)
@@ -115,6 +122,7 @@ absRMSF, fwhmRMSF = getRMSF(nuArray, PhiArray)
 # Output
 absRMSF = [...]
 fwhmRMSF = ...
+```
 """
 function getRMSF(nuArray::AbstractArray, PhiArray::AbstractArray; log_progress::Bool = false)
 
@@ -124,20 +132,22 @@ function getRMSF(nuArray::AbstractArray, PhiArray::AbstractArray; log_progress::
     
     nPhi = length(PhiArray)
     nLambda = length(LambdaSqArray)
-    
-    WeightArray = ones(nLambda)
-    K = 1.0 / sum(WeightArray)
-    
-    Lambda0Sq = K .* sum(WeightArray .* LambdaSqArray)
+
+    K = 1.0 / nLambda
+
+    Lambda0Sq = sum(LambdaSqArray) * K
     a = (LambdaSqArray .- Lambda0Sq)
     
     fwhmRMSF = 3.8 / (maximum(LambdaSqArray) - minimum(LambdaSqArray))
 
-    RMSF = complex(zeros(nPhi))
-    arg = complex(zeros(nPhi))
+    RMSF = Vector{ComplexF64}(undef, nPhi)
+    phase = Vector{ComplexF64}(undef, nLambda)
     for i in 1:nPhi
-        arg = exp.((-2.0im .* PhiArray[i]) .* a)
-        RMSF[i] = K .* sum(WeightArray .* arg)
+        phi = Float64(PhiArray[i])
+        @inbounds for l in eachindex(a)
+            phase[l] = cis(-2.0 * phi * a[l])
+        end
+        RMSF[i] = K * sum(phase)
         if log_progress
             print_progress(i, nPhi)
             @debug "RMSF accumulation" idx = i total = nPhi

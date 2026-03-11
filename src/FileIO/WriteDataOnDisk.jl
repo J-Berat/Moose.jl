@@ -23,21 +23,29 @@ specarray = [1.0, 2.0, 3.0]  # Example spectral array
 WriteData3D(resultspath, data, DataName, specarray)
 ```
 """
-function WriteData3D(resultspath::String, data::AbstractArray, DataName::String, specarray::AbstractArray)
+const _HEADER_PARAMS_CACHE = Dict{String, Dict{String, Any}}()
+
+function _header_params_cached(DataName::String)
+    return get!(_HEADER_PARAMS_CACHE, DataName) do
+        header_params(
+            naxis=DictHeader[DataName]["naxis"],
+            ctype1=DictHeader[DataName]["ctype1"],
+            ctype2=DictHeader[DataName]["ctype2"],
+            ctype3=DictHeader[DataName]["ctype3"],
+            cunit1=DictHeader[DataName]["cunit1"],
+            cunit2=DictHeader[DataName]["cunit2"],
+            cunit3=DictHeader[DataName]["cunit3"],
+            bunit=DictHeader[DataName]["bunit"],
+        )
+    end
+end
+
+function WriteData3D(resultspath::String, data::AbstractArray, DataName::String, specarray::AbstractArray; ensure_path::Bool=true)
 
     # Path
-    mkpath(resultspath)
+    ensure_path && mkpath(resultspath)
 
-    params = header_params(
-        naxis=DictHeader[DataName]["naxis"],
-        ctype1=DictHeader[DataName]["ctype1"],
-        ctype2=DictHeader[DataName]["ctype2"],
-        ctype3=DictHeader[DataName]["ctype3"],
-        cunit1=DictHeader[DataName]["cunit1"],
-        cunit2=DictHeader[DataName]["cunit2"],
-        cunit3=DictHeader[DataName]["cunit3"],
-        bunit=DictHeader[DataName]["bunit"],
-    )
+    params = _header_params_cached(DataName)
 
     header = buildHeader3D(
         params["naxis"],
@@ -58,6 +66,24 @@ function WriteData3D(resultspath::String, data::AbstractArray, DataName::String,
     end
 
     println("The FITS file of $DataName has been written in this directory: $fits_path")
+end
+
+"""
+    WriteQUnu3D(resultspath::String, Qnu::AbstractArray, Unu::AbstractArray, specarray::AbstractArray)
+
+Write `Qnu` and `Unu` FITS cubes, using parallel I/O when multiple Julia threads are available.
+"""
+function WriteQUnu3D(resultspath::String, Qnu::AbstractArray, Unu::AbstractArray, specarray::AbstractArray; ensure_path::Bool=true)
+    ensure_path && mkpath(resultspath)
+    if Threads.nthreads() > 1
+        task_q = Threads.@spawn WriteData3D(resultspath, Qnu, "Qnu", specarray; ensure_path=false)
+        task_u = Threads.@spawn WriteData3D(resultspath, Unu, "Unu", specarray; ensure_path=false)
+        fetch(task_q)
+        fetch(task_u)
+    else
+        WriteData3D(resultspath, Qnu, "Qnu", specarray; ensure_path=false)
+        WriteData3D(resultspath, Unu, "Unu", specarray; ensure_path=false)
+    end
 end
 
 """
@@ -83,19 +109,12 @@ DataName = "ExampleData"
 WriteData2D(resultspath, data, DataName)
 ```
 """
-function WriteData2D(resultspath::String, data::AbstractArray, DataName::String)
+function WriteData2D(resultspath::String, data::AbstractArray, DataName::String; ensure_path::Bool=true)
 
     # Path
-    mkpath(resultspath)
+    ensure_path && mkpath(resultspath)
 
-    params = header_params(
-        naxis=DictHeader[DataName]["naxis"],
-        ctype1=DictHeader[DataName]["ctype1"],
-        ctype2=DictHeader[DataName]["ctype2"],
-        cunit1=DictHeader[DataName]["cunit1"],
-        cunit2=DictHeader[DataName]["cunit2"],
-        bunit=DictHeader[DataName]["bunit"],
-    )
+    params = _header_params_cached(DataName)
 
     header = buildHeader2D(
         params["naxis"],

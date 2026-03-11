@@ -10,6 +10,7 @@ using StatsBase
 using Interpolations
 using Dierckx
 using FFTW
+using LinearAlgebra
 
 include(joinpath("Utils", "ArrayMath.jl"))
 include(joinpath("Utils", "Prompts.jl"))

@@ -71,28 +71,32 @@ function radial_psd(field::AbstractMatrix; pixel_size::Real = 1.0, nbins::Union{
         detrend_mean = detrend_mean, normalize = normalize, log_progress = log_progress)
 
     nx, ny = size(psd2d)
-    fx = reshape(kx, :, 1)
-    fy = reshape(ky, 1, :)
-    radii = hypot.(fx, fy)
 
     nbins = isnothing(nbins) ? max(floor(Int, min(nx, ny) / 2), 1) : nbins
-    edges = collect(range(0, maximum(radii), length = nbins + 1))
-    bin_width = max(edges[2] - edges[1], eps(real(eltype(radii))))
+    max_radius = hypot(maximum(abs, kx), maximum(abs, ky))
+    edges = collect(range(0, max_radius, length = nbins + 1))
+    radius_type = real(promote_type(eltype(kx), eltype(ky)))
+    bin_width = max(edges[2] - edges[1], eps(radius_type))
     inv_bin_width = inv(bin_width)
 
     bin_sums = zeros(Float64, nbins)
     bin_counts = zeros(Int, nbins)
 
-    r_flat = vec(radii)
-    psd_flat = vec(psd2d)
-    progress_step = max(floor(Int, length(r_flat) / 10), 1)
-    @inbounds for idx in eachindex(r_flat)
-        bin = clamp(floor(Int, r_flat[idx] * inv_bin_width) + 1, 1, nbins)
-        bin_sums[bin] += psd_flat[idx]
-        bin_counts[bin] += 1
-        if log_progress && idx % progress_step == 0
-            print_progress(idx, length(r_flat))
-            @debug "Radial PSD binning" processed = idx total = length(r_flat)
+    total_points = nx * ny
+    progress_step = max(floor(Int, total_points / 10), 1)
+    processed = 0
+    @inbounds for j in eachindex(ky)
+        kyj = ky[j]
+        for i in eachindex(kx)
+            radius = hypot(kx[i], kyj)
+            bin = clamp(floor(Int, radius * inv_bin_width) + 1, 1, nbins)
+            bin_sums[bin] += psd2d[i, j]
+            bin_counts[bin] += 1
+            processed += 1
+            if log_progress && processed % progress_step == 0
+                print_progress(processed, total_points)
+                @debug "Radial PSD binning" processed = processed total = total_points
+            end
         end
     end
 

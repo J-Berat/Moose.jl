@@ -1,0 +1,42 @@
+{
+  "base_dir": "/ABSOLUTE/PATH/TO/YOUR/SIMULATION_ROOT",
+  "simulations": [
+    "simulation_001"
+  ],
+  "chosen_LOS": [
+    "x",
+    "y",
+    "z"
+  ],
+  "conversionB": 1.0,
+  "conversionn": 1.0,
+  "conversionT": 1.0,
+  "box": {
+    "size_pc": 50.0,
+    "npix": 256
+  },
+  "freq": {
+    "start": 120.0,
+    "end": 167.0,
+    "step": 0.098
+  },
+  "faraday": {
+    "enabled": false,
+    "phimin": -20.0,
+    "phimax": 20.0,
+    "dphi": 0.1
+  },
+  "responseSynchrotron": "N",
+  "kernel_size_synchrotron": 11,
+  "add_noise": "N",
+  "SNR_nu": 0.9,
+  "emissivity": {
+    "path": "emissivity.dat"
+  },
+  "ne": {
+    "mode": "1",
+    "ion_fraction": 0.01
+  },
+  "log_progress": false,
+  "config_path": "moose_config.json"
+}
