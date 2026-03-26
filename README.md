@@ -189,8 +189,8 @@ Notes:
 
 ## Input data requirements
 MOOSE expects simulation outputs in a directory containing the following FITS cubes with these exact filenames:
-- `Bx.fits`, `By.fits`, `Bz.fits`: magnetic field components (µG recommended).
-- `density.fits`: neutral hydrogen number density (cm⁻³ recommended).
+- `Bx.fits`, `By.fits`, `Bz.fits`: magnetic field components (µG).
+- `density.fits`: neutral hydrogen number density (cm⁻³).
 - `temperature.fits`: gas temperature (K).
 - `densityHp.fits`: optional electron density cube when providing `n_e` directly; otherwise it is derived from prescriptions you choose during prompts.
 
