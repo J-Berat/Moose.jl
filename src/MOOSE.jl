@@ -5,12 +5,15 @@ using Dates
 using JSON
 using CSV
 using DataFrames
+using Distributions
 using FITSIO
 using StatsBase
 using Interpolations
 using Dierckx
 using FFTW
 using LinearAlgebra
+using Logging
+using Random
 
 include(joinpath("Utils", "ArrayMath.jl"))
 include(joinpath("Utils", "Prompts.jl"))

@@ -1,5 +1,4 @@
 using Test
-using Logging
 using MOOSE
 include(joinpath(@__DIR__, "..", "src", "MOOSE_cli.jl"))
 using MOOSE.MOOSEFromConfig: build_config
@@ -73,6 +72,25 @@ end
     @test isapprox(psd1d[1], 0.25; atol = 1e-12)
 end
 
+@testset "Interferometric filtering" begin
+    H, Hshift = MOOSE.instrument_bandpass_L(8, 8; Δx = 1.0, Δy = 1.0, Lcut_small = 1.0, Llarge = 4.0, fNy = 0.5)
+    @test size(H) == (8, 8)
+    @test size(Hshift) == (8, 8)
+    @test Set(vec(H)) ⊆ Set(Float32[0, 1])
+    @test H[1, 1] == 0f0
+    @test any(==(1f0), H)
+
+    img = reshape(Float64.(1:64), 8, 8)
+    out = MOOSE.apply_instrument_2d(img, H)
+    @test size(out) == size(img)
+    @test eltype(out) <: Real
+
+    cube = repeat(img, 1, 1, 3)
+    filtered = MOOSE.apply_to_array_xy(cube, H; n = 8, m = 8)
+    @test size(filtered) == size(cube)
+    @test filtered[:, :, 1] ≈ out
+end
+
 @testset "CLI argument validation" begin
     err = try
         parse_cli_args(["--faraday", "maybe"])
@@ -131,4 +149,36 @@ end
         @test err.code == :invalid_frequency
         @test occursin("Frequency step", err.message) || occursin("greater than the start frequency", err.message)
     end
+
+    mktempdir() do base_dir
+        sim_dir = joinpath(base_dir, "simu3")
+        mkdir(sim_dir)
+        interpolation_path = joinpath(base_dir, "emissivity.csv")
+        write(interpolation_path, "B\tnu\te_para\te_perp\n1.0\t120.0\t1.0\t2.0\n")
+
+        cfg = Dict(
+            "base_dir" => base_dir,
+            "simulations" => [sim_dir],
+            "interpolation_file_path" => interpolation_path,
+            "box" => Dict(
+                "x" => 30.0,
+                "y" => 60.0,
+                "z" => 90.0,
+                "npix" => 128,
+            ),
+            "rng_seed" => 1234,
+        )
+
+        run_cfg, _ = build_config(cfg, "config.json")
+        @test run_cfg.BoxLength_pc.x == 30.0
+        @test run_cfg.BoxLength_pc.y == 60.0
+        @test run_cfg.BoxLength_pc.z == 90.0
+        @test run_cfg.BoxLength_pix == (; x = 128, y = 128, z = 128)
+        @test run_cfg.rng_seed == 1234
+    end
+end
+
+@testset "CLI reproducibility options" begin
+    _, _, _, overrides = parse_cli_args(["--rng-seed", "42"])
+    @test overrides["rng_seed"] == 42
 end

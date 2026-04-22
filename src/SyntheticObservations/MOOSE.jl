@@ -37,7 +37,7 @@ The function interacts with the user via the terminal to gather the following in
   - Prompt: `Do you want to include Faraday rotation in the computation of Q and U?`
 - Option to perform filtering.
   - Prompt: `Do you want to perform filtering for Synchrotron data?`
-  - Specify kernel size for filtering.
+  - Specify the largest Fourier scale retained by the instrumental 0/1 mask.
 
 ### 5. Lines of Sight
 - Option to process all lines of sight (`x`, `y`, `z`) or choose specific ones.
@@ -163,7 +163,7 @@ function format_duration(elapsed)
     return string(padded_hours, ":", padded_minutes, ":", padded_seconds, ".", padded_ms)
 end
 
-function write_summary_log(base_dir, chosen_simu, chosen_LOS, elapsed; config_path="moose_config.json", faraday="N", responseSynchrotron="N", add_noise="N", interpolation_file_path=nothing, conversionB=nothing, conversionn=nothing, conversionT=nothing, ne_option=nothing)
+function write_summary_log(base_dir, chosen_simu, chosen_LOS, elapsed; config_path="moose_config.json", faraday="N", responseSynchrotron="N", add_noise="N", interpolation_file_path=nothing, conversionB=nothing, conversionn=nothing, conversionT=nothing, ne_option=nothing, rng_seed=nothing)
     log_path = joinpath(base_dir, "MOOSE_summary.log")
     open(log_path, "a") do io
         println(io)
@@ -186,9 +186,103 @@ function write_summary_log(base_dir, chosen_simu, chosen_LOS, elapsed; config_pa
         println(io, "Noise added: $(add_noise)")
         interpolation_file_path !== nothing && println(io, "Interpolation file: $(interpolation_file_path)")
         ne_option !== nothing && println(io, "Electron density option: $(ne_option)")
+        rng_seed !== nothing && println(io, "Random seed: $(rng_seed)")
     end
 end
 
+const LOSFloatTuple = NamedTuple{(:x, :y, :z), Tuple{Float64, Float64, Float64}}
+const LOSIntTuple = NamedTuple{(:x, :y, :z), Tuple{Int, Int, Int}}
+
+function _get_axis_value(values::AbstractDict, names, default)
+    for name in names
+        haskey(values, name) && return values[name]
+        string_name = String(name)
+        haskey(values, string_name) && return values[string_name]
+    end
+
+    return default
+end
+
+function normalize_los_float_values(value; default::Real = 50.0, fallback_keys = (:size_pc,))
+    if value isa NamedTuple
+        fallback = hasproperty(value, fallback_keys[1]) ? getproperty(value, fallback_keys[1]) : default
+        return (;
+            x = Float64(hasproperty(value, :x) ? getproperty(value, :x) : fallback),
+            y = Float64(hasproperty(value, :y) ? getproperty(value, :y) : fallback),
+            z = Float64(hasproperty(value, :z) ? getproperty(value, :z) : fallback),
+        )
+    elseif value isa AbstractDict
+        fallback = _get_axis_value(value, fallback_keys, default)
+        return (;
+            x = Float64(_get_axis_value(value, (:x, :X), fallback)),
+            y = Float64(_get_axis_value(value, (:y, :Y), fallback)),
+            z = Float64(_get_axis_value(value, (:z, :Z), fallback)),
+        )
+    elseif value isa AbstractVector
+        length(value) == 3 || throw_config_error("LOS length arrays must have three elements (x, y, z).")
+        return (; x = Float64(value[1]), y = Float64(value[2]), z = Float64(value[3]))
+    else
+        scalar = Float64(value)
+        return (; x = scalar, y = scalar, z = scalar)
+    end
+end
+
+function normalize_los_int_values(value; default::Integer = 256, fallback_keys = (:npix,))
+    if value isa NamedTuple
+        fallback = hasproperty(value, fallback_keys[1]) ? getproperty(value, fallback_keys[1]) : default
+        return (;
+            x = Int(hasproperty(value, :x) ? getproperty(value, :x) : fallback),
+            y = Int(hasproperty(value, :y) ? getproperty(value, :y) : fallback),
+            z = Int(hasproperty(value, :z) ? getproperty(value, :z) : fallback),
+        )
+    elseif value isa AbstractDict
+        fallback = _get_axis_value(value, fallback_keys, default)
+        return (;
+            x = Int(_get_axis_value(value, (:x, :X), fallback)),
+            y = Int(_get_axis_value(value, (:y, :Y), fallback)),
+            z = Int(_get_axis_value(value, (:z, :Z), fallback)),
+        )
+    elseif value isa AbstractVector
+        length(value) == 3 || throw_config_error("LOS pixel arrays must have three elements (x, y, z).")
+        return (; x = Int(value[1]), y = Int(value[2]), z = Int(value[3]))
+    else
+        scalar = Int(value)
+        return (; x = scalar, y = scalar, z = scalar)
+    end
+end
+
+function los_axis_value(values::NamedTuple, los::AbstractString)
+    axis = Symbol(lowercase(String(los)))
+    axis in (:x, :y, :z) || throw_config_error("Invalid line of sight: $(los). Allowed values are x, y, or z."; code=:invalid_los)
+    return getproperty(values, axis)
+end
+
+function axis_values_for_json(values::NamedTuple)
+    values.x == values.y == values.z && return values.x
+    return Dict("x" => values.x, "y" => values.y, "z" => values.z)
+end
+
+function validate_los_float_values(values::NamedTuple, field_name)
+    for axis in (:x, :y, :z)
+        value = Float64(getproperty(values, axis))
+        isfinite(value) || error("`$(field_name).$(axis)` must be finite. Got: $(value)")
+        value > 0 || error("`$(field_name).$(axis)` must be > 0. Got: $(value)")
+    end
+
+    return values
+end
+
+function validate_los_int_values(values::NamedTuple, field_name)
+    for axis in (:x, :y, :z)
+        value = Int(getproperty(values, axis))
+        value > 0 || error("`$(field_name).$(axis)` must be > 0. Got: $(value)")
+    end
+
+    return values
+end
+
+normalize_rng_seed(value) =
+    value === nothing ? nothing : Int(value)
 
 struct RunConfig
     base_dir::String
@@ -202,7 +296,7 @@ struct RunConfig
     phimax::Float64
     dphi::Float64
     responseSynchrotron::String
-    kernel_size_synchrotron::Union{Nothing, Int}
+    kernel_size_synchrotron::Union{Nothing, Float64}
     add_noise::String
     SNR_nu::Union{Nothing, Float64}
     interpolation_file_path::String
@@ -212,10 +306,11 @@ struct RunConfig
     nustart::Float64
     nuend::Float64
     dnu::Float64
-    BoxLength_pc::Float64
-    BoxLength_pix::Int
+    BoxLength_pc::LOSFloatTuple
+    BoxLength_pix::LOSIntTuple
     config_path::String
     log_progress::Bool
+    rng_seed::Union{Nothing, Int}
 
     function RunConfig(
         base_dir,
@@ -243,6 +338,7 @@ struct RunConfig
         BoxLength_pix,
         config_path,
         log_progress=true,
+        rng_seed=nothing,
     )
         faraday_flag = uppercase(faraday_rotation)
         response_flag = uppercase(responseSynchrotron)
@@ -250,7 +346,7 @@ struct RunConfig
         sim_paths = map(String, simulations)
         los_list = map(String, chosen_LOS)
 
-        kernel_size_synchrotron = kernel_size_synchrotron === nothing ? nothing : Int(kernel_size_synchrotron)
+        kernel_size_synchrotron = kernel_size_synchrotron === nothing ? nothing : Float64(kernel_size_synchrotron)
         SNR_nu = SNR_nu === nothing ? nothing : Float64(SNR_nu)
         IonizationFraction = IonizationFraction === nothing ? nothing : Float64(IonizationFraction)
         wolfire_constants = wolfire_constants === nothing ? nothing : (
@@ -282,10 +378,11 @@ struct RunConfig
             Float64(nustart),
             Float64(nuend),
             Float64(dnu),
-            Float64(BoxLength_pc),
-            Int(BoxLength_pix),
+            normalize_los_float_values(BoxLength_pc),
+            normalize_los_int_values(BoxLength_pix),
             String(config_path),
             Bool(log_progress),
+            normalize_rng_seed(rng_seed),
         )
     end
 end
@@ -323,17 +420,31 @@ function config_dict_from_struct(cfg::RunConfig)
         "nustart" => cfg.nustart,
         "nuend" => cfg.nuend,
         "dnu" => cfg.dnu,
-        "BoxLength_pc" => cfg.BoxLength_pc,
-        "BoxLength_pix" => cfg.BoxLength_pix,
+        "BoxLength_pc" => axis_values_for_json(cfg.BoxLength_pc),
+        "BoxLength_pix" => axis_values_for_json(cfg.BoxLength_pix),
         "config_path" => cfg.config_path,
         "log_progress" => cfg.log_progress,
+        "rng_seed" => cfg.rng_seed,
     )
 end
 
+const DEFAULT_WOLFIRE_CONSTANTS = (2.5e-16, 1.0, 0.5, 1.4e-4)
+
 function run_moose_processing(cfg::RunConfig; quiet::Bool = false, persisted_config::Union{Nothing, Dict} = nothing)
+    if quiet
+        with_logger(NullLogger()) do
+            _run_moose_processing(cfg; quiet = quiet, persisted_config = persisted_config)
+        end
+    else
+        _run_moose_processing(cfg; quiet = quiet, persisted_config = persisted_config)
+    end
+end
+
+function _run_moose_processing(cfg::RunConfig; quiet::Bool = false, persisted_config::Union{Nothing, Dict} = nothing)
     nuArray = range(start = cfg.nustart, stop = cfg.nuend, step = cfg.dnu)
     PhiArray = cfg.faraday_rotation == "Y" ? range(start = cfg.phimin, stop = cfg.phimax, step = cfg.dphi) : nothing
-    PixelLength_pc, PixelLength_cm, DistanceArray = los_pixel_scale(cfg.BoxLength_pc, cfg.BoxLength_pix)
+    PixelLength_pc, PixelLength_cm, DistanceArray = los_pixel_scale(cfg.BoxLength_pc.x, cfg.BoxLength_pix.x)
+    rng = cfg.rng_seed === nothing ? Random.default_rng() : Random.MersenneTwister(cfg.rng_seed)
 
     isfile(cfg.interpolation_file_path) ||
         throw_config_error("The interpolation file $(cfg.interpolation_file_path) was not found."; code=:missing_interpolation_file)
@@ -344,11 +455,6 @@ function run_moose_processing(cfg::RunConfig; quiet::Bool = false, persisted_con
     end
 
     start_time = now()
-    wolfire_constants = nothing
-    if cfg.ne_option == "1"
-        wolfire_constants = cfg.wolfire_constants === nothing ? WolfireConstants() : cfg.wolfire_constants
-    end
-
     if cfg.ne_option == "3"
         missing_cubes = [simu for simu in cfg.simulations if !isfile(joinpath(simu, "densityHp.fits"))]
         !isempty(missing_cubes) && throw_config_error(
@@ -360,57 +466,56 @@ function run_moose_processing(cfg::RunConfig; quiet::Bool = false, persisted_con
     wolfire_constants = nothing
     ion_fraction = nothing
     if cfg.ne_option == "1"
-        wolfire_constants = WolfireConstants()
+        wolfire_constants = cfg.wolfire_constants === nothing ? DEFAULT_WOLFIRE_CONSTANTS : cfg.wolfire_constants
     elseif cfg.ne_option == "2"
         ion_fraction = cfg.IonizationFraction === nothing ? 0.01 : cfg.IonizationFraction
     end
 
     for (i, simu) in enumerate(cfg.simulations)
-        println("Processing Simulation: $(simu)")
+        @info "Processing simulation" simulation = simu
 
         for LOS in cfg.chosen_LOS
-            println(Crayon(foreground=:yellow, bold=true)("→ Processing LOS: $(LOS)"))
+            @info "Processing line of sight" los = LOS
+            box_length_pc = los_axis_value(cfg.BoxLength_pc, LOS)
+            box_length_pix = los_axis_value(cfg.BoxLength_pix, LOS)
+            PixelLength_pc, PixelLength_cm, DistanceArray = los_pixel_scale(box_length_pc, box_length_pix)
 
             if cfg.ne_option == "1"
                 zeta, Geff, omegaPAH, XC = wolfire_constants
                 ProcessSynchrotron(simu, LOS, cfg.faraday_rotation, cfg.responseSynchrotron, df, cfg.add_noise, cfg.SNR_nu,
                     cfg.kernel_size_synchrotron, zeta, Geff, omegaPAH, XC, nuArray, PhiArray, PixelLength_pc, PixelLength_cm,
-                    cfg.BoxLength_pc, DistanceArray, cfg.conversionn, cfg.conversionT, cfg.conversionB;
-                    log_progress = cfg.log_progress)
+                    box_length_pc, DistanceArray, cfg.conversionn, cfg.conversionT, cfg.conversionB;
+                    log_progress = cfg.log_progress, rng = rng)
             elseif cfg.ne_option == "2"
                 ProcessSynchrotron(simu, LOS, cfg.faraday_rotation, cfg.responseSynchrotron, df, cfg.add_noise, cfg.SNR_nu,
                     cfg.kernel_size_synchrotron, ion_fraction, nuArray, PhiArray, PixelLength_pc, PixelLength_cm,
-                    cfg.BoxLength_pc, DistanceArray, cfg.conversionn, cfg.conversionT, cfg.conversionB;
-                    log_progress = cfg.log_progress)
+                    box_length_pc, DistanceArray, cfg.conversionn, cfg.conversionT, cfg.conversionB;
+                    log_progress = cfg.log_progress, rng = rng)
             else
                 ProcessSynchrotron(simu, LOS, cfg.faraday_rotation, cfg.responseSynchrotron, df, cfg.add_noise, cfg.SNR_nu,
                     cfg.kernel_size_synchrotron, nuArray, PhiArray, PixelLength_pc, PixelLength_cm,
-                    cfg.BoxLength_pc, DistanceArray, cfg.conversionn, cfg.conversionT, cfg.conversionB;
-                    log_progress = cfg.log_progress)
+                    box_length_pc, DistanceArray, cfg.conversionn, cfg.conversionT, cfg.conversionB;
+                    log_progress = cfg.log_progress, rng = rng)
             end
         end
 
         if length(cfg.simulations) > 1
-            println("Finished processing all chosen LOS for simulation: $simu")
+            @info "Finished processing all chosen LOS" simulation = simu
             print_progress(i, length(cfg.simulations))
         end
     end
 
-    println("Finished processing all simulations.")
+    @info "Finished processing all simulations"
 
     elapsed = now() - start_time
-    println(Crayon(foreground=:green, bold=true)("Summary:"))
-    println(Crayon(foreground=:green)("Simulations processed: $(join(cfg.simulations, ", "))"))
-    println(Crayon(foreground=:green)("Lines of sight: $(join(cfg.chosen_LOS, ", "))"))
-    println(Crayon(foreground=:green)("Output directory: $(cfg.base_dir)"))
-    println(Crayon(foreground=:green)("Total execution time: $(format_duration(elapsed))"))
+    @info "Summary" simulations = join(cfg.simulations, ", ") los = join(cfg.chosen_LOS, ", ") output_directory = cfg.base_dir elapsed = format_duration(elapsed)
 
     config_to_save = persisted_config === nothing ? config_dict_from_struct(cfg) : persisted_config
     save_config(config_to_save, cfg.config_path)
     write_summary_log(cfg.base_dir, map(basename, cfg.simulations), cfg.chosen_LOS, elapsed; config_path=cfg.config_path,
         faraday=cfg.faraday_rotation, responseSynchrotron=cfg.responseSynchrotron, add_noise=cfg.add_noise,
         interpolation_file_path=cfg.interpolation_file_path, conversionB=cfg.conversionB, conversionn=cfg.conversionn,
-        conversionT=cfg.conversionT, ne_option=cfg.ne_option)
+        conversionT=cfg.conversionT, ne_option=cfg.ne_option, rng_seed=cfg.rng_seed)
 end
 
 
@@ -434,10 +539,10 @@ Description:
  Non-interactive CLI:
   For scripted or assistive use, run `julia src/MOOSE_cli.jl --help` to see the
   full set of command-line flags (e.g., --config, --base-dir, --simu, --los,
-  --quiet) for configuring MOOSE without prompts.
+  --rng-seed, --quiet) for configuring MOOSE without prompts.
 
  It computes the synchrotron Stokes parameters Q and U for a set of simulation outputs,
- optionally applying Faraday rotation, noise and primary beam filtering.
+ optionally applying Faraday rotation, noise and an interferometric Fourier mask.
 
  The tool interacts with the user to define simulation directories, select simulations and
  lines of sight, and configure physical unit conversions and data processing options.
@@ -457,7 +562,7 @@ Flow:
    Select LOS + process Q/U/I
               │
               ▼
-   Apply noise + Gaussian Primary Beam
+   Apply noise + interferometric Fourier mask
               │
               ▼
    Process RM synthesis on Q and U
@@ -579,8 +684,8 @@ function run_moose_interactive(; quiet::Bool = false, reset_config::Bool = true)
     config["phimax"] = phimax
     config["dphi"] = dphi
 
-    responseSynchrotron = ask_user("Do you want to perform filtering (primary beam) for Synchrotron data? (Y/N)", get(config, "responseSynchrotron", "N"))
-    kernel_size_synchrotron = uppercase(responseSynchrotron) == "Y" ? ask_user("What kernel size (in pix) do you want for Synchrotron filtering?", get(config, "kernel_size_synchrotron", 11)) : nothing
+    responseSynchrotron = ask_user("Do you want to perform interferometric Fourier filtering for Synchrotron data? (Y/N)", get(config, "responseSynchrotron", "N"))
+    kernel_size_synchrotron = uppercase(responseSynchrotron) == "Y" ? ask_user("Largest Fourier scale to keep for Synchrotron filtering (in pixels, e.g. 154)", get(config, "kernel_size_synchrotron", 154.0)) : nothing
     config["responseSynchrotron"] = responseSynchrotron
     config["kernel_size_synchrotron"] = kernel_size_synchrotron
 
@@ -589,6 +694,14 @@ function run_moose_interactive(; quiet::Bool = false, reset_config::Bool = true)
 
     SNR_nu = uppercase(add_noise) == "Y" ? ask_user("Enter the desired SNR in the frequency space:", get(config, "SNR_nu", 0.9)) : nothing
     config["SNR_nu"] = SNR_nu
+
+    rng_seed = get(config, "rng_seed", nothing)
+    if uppercase(add_noise) == "Y"
+        default_seed = rng_seed === nothing ? 0 : Int(rng_seed)
+        raw_seed = ask_user("Random seed for reproducible noise (integer; 0 for a random seed):", default_seed)
+        rng_seed = Int(raw_seed) == 0 ? nothing : Int(raw_seed)
+    end
+    config["rng_seed"] = rng_seed
 
     list_LOS = ["x", "y", "z"]
     los_prompt = "Enter 'all' to process all lines of sight (x, y, z) or specify comma-separated ones (e.g., x,y):"
@@ -722,6 +835,7 @@ function run_moose_interactive(; quiet::Bool = false, reset_config::Bool = true)
         BoxLength_pix,
         config_path,
         get(config, "log_progress", true),
+        rng_seed,
     )
 
     return cfg, config

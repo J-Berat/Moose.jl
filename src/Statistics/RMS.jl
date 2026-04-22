@@ -10,7 +10,7 @@ function RMS(first::AbstractArray, others::AbstractArray...)
     vectors = [vec(A) for A in (first, others...)]
 
     lengths = length.(vectors)
-    first_len = first(lengths)
+    first_len = lengths[1]
     if any(l -> l != first_len, Iterators.drop(lengths, 1))
         throw(ArgumentError("All inputs to RMS must have the same number of elements; got lengths $(join(lengths, ", "))."))
     end
@@ -20,4 +20,3 @@ function RMS(first::AbstractArray, others::AbstractArray...)
 
     return sqrt(mean(total))
 end
-

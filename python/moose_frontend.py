@@ -85,6 +85,9 @@ def build_julia_args(parsed: argparse.Namespace, config_path: Path | None) -> Li
     if parsed.snr is not None:
         args.extend(["--snr", str(parsed.snr)])
 
+    if parsed.rng_seed is not None:
+        args.extend(["--rng-seed", str(parsed.rng_seed)])
+
     if parsed.ne_option:
         args.extend(["--ne-option", str(parsed.ne_option)])
 
@@ -317,6 +320,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Enable or disable noise injection.",
     )
     parser.add_argument("--snr", type=float, help="Signal-to-noise ratio for noise injection.")
+    parser.add_argument("--rng-seed", type=int, help="Random seed for reproducible noise injection.")
     parser.add_argument(
         "--ne-option",
         choices=["1", "2", "3"],

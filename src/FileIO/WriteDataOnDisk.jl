@@ -65,7 +65,7 @@ function WriteData3D(resultspath::String, data::AbstractArray, DataName::String,
         write(f, data; header=header)
     end
 
-    println("The FITS file of $DataName has been written in this directory: $fits_path")
+    @info "Wrote FITS file" data = DataName path = fits_path
 end
 
 """
@@ -131,6 +131,6 @@ function WriteData2D(resultspath::String, data::AbstractArray, DataName::String;
         write(f, data; header=header)
     end
 
-    println("The FITS file of $DataName has been written in this directory: $fits_path")
+    @info "Wrote FITS file" data = DataName path = fits_path
 
 end

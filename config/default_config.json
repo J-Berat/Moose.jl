@@ -27,9 +27,10 @@
     "dphi": 0.1
   },
   "responseSynchrotron": "N",
-  "kernel_size_synchrotron": 11,
+  "kernel_size_synchrotron": 154.0,
   "add_noise": "N",
   "SNR_nu": 0.9,
+  "rng_seed": null,
   "emissivity": {
     "path": "emissivity.dat"
   },

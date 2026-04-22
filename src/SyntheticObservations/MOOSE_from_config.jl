@@ -7,7 +7,9 @@ using Dates
 using JSON
 
 using ..MOOSE: PARSEC_TO_CM, RunConfig, ValidationResult, ensure_directory_access,
-               ensure_readable_file, run_moose_processing, throw_config_error,
+               ensure_readable_file, normalize_los_float_values, normalize_los_int_values,
+               normalize_rng_seed, run_moose_processing, throw_config_error,
+               validate_los_float_values, validate_los_int_values,
                validation_failure, validation_success
 
 function normalize_base_dir(cfg, config_path)
@@ -181,13 +183,19 @@ end
 
 function build_distance_parameters(cfg)
     box_cfg = get(cfg, "box", nothing)
-    raw_box_length_pc = box_cfg isa AbstractDict ? get(box_cfg, "size_pc", get(cfg, "BoxLength_pc", 50.0)) : get(cfg, "BoxLength_pc", 50.0)
-    raw_box_length_pix = box_cfg isa AbstractDict ? get(box_cfg, "npix", get(cfg, "BoxLength_pix", 256)) : get(cfg, "BoxLength_pix", 256)
+    raw_box_length_pc = box_cfg isa AbstractDict ? get(cfg, "BoxLength_pc", box_cfg) : get(cfg, "BoxLength_pc", 50.0)
+    raw_box_length_pix = if haskey(cfg, "BoxLength_pix")
+        cfg["BoxLength_pix"]
+    elseif box_cfg isa AbstractDict
+        get(box_cfg, "npix", get(box_cfg, "pixels", 256))
+    else
+        256
+    end
 
-    box_length_pc = normalize_box_lengths(raw_box_length_pc)
-    box_length_pix = normalize_box_pixels(raw_box_length_pix)
+    box_length_pc = normalize_los_float_values(raw_box_length_pc; default = 50.0, fallback_keys = (:size_pc,))
+    box_length_pix = normalize_los_int_values(raw_box_length_pix; default = 256, fallback_keys = (:npix,))
 
-    return Float64(box_length_pc.x), Int(box_length_pix.x)
+    return box_length_pc, box_length_pix
 end
 
 """
@@ -237,16 +245,14 @@ function build_config(cfg, config_path)
         code=:missing_interpolation_path,
     )
     interpolation_file_path = isabspath(interpolation_file_path) ? interpolation_file_path : joinpath(base_dir, interpolation_file_path)
-    interpolation_validation = ensure_readable_file(interpolation_file_path)
-    interpolation_validation === nothing || error(interpolation_validation)
 
     ne_option = string(get(cfg, "ne_option", get(get(cfg, "ne", Dict()), "mode", 1)))
     IonizationFraction = get(cfg, "IonizationFraction", get(get(cfg, "ne", Dict()), "ion_fraction", 0.01))
     wolfire_constants = collect_wolfire_constants(cfg)
 
     BoxLength_pc, BoxLength_pix = build_distance_parameters(cfg)
-    BoxLength_pc = validate_positive_finite(BoxLength_pc, "BoxLength_pc")
-    BoxLength_pix > 0 || error("`BoxLength_pix` must be > 0. Got: $(BoxLength_pix)")
+    BoxLength_pc = validate_los_float_values(BoxLength_pc, "BoxLength_pc")
+    BoxLength_pix = validate_los_int_values(BoxLength_pix, "BoxLength_pix")
 
     nustart, nuend, dnu = build_frequency_array(cfg)
     nustart = validate_positive_finite(nustart, "nustart")
@@ -267,7 +273,7 @@ function build_config(cfg, config_path)
 
     if responseSynchrotron == "Y"
         kernel_size_synchrotron === nothing && error("`kernel_size_synchrotron` is required when `responseSynchrotron` is enabled.")
-        kernel_size_synchrotron = Int(kernel_size_synchrotron)
+        kernel_size_synchrotron = Float64(kernel_size_synchrotron)
         kernel_size_synchrotron > 0 || error("`kernel_size_synchrotron` must be > 0.")
     end
 
@@ -277,6 +283,11 @@ function build_config(cfg, config_path)
     elseif SNR_nu !== nothing
         SNR_nu = validate_positive_finite(SNR_nu, "SNR_nu")
     end
+
+    interpolation_validation = ensure_readable_file(interpolation_file_path)
+    interpolation_validation === nothing || throw_config_error(interpolation_validation; code=:missing_interpolation_file)
+
+    rng_seed = normalize_rng_seed(get(cfg, "rng_seed", nothing))
 
     return RunConfig(
         base_dir,
@@ -304,6 +315,7 @@ function build_config(cfg, config_path)
         BoxLength_pix,
         config_path,
         log_progress,
+        rng_seed,
     ), simu_paths
 end
 

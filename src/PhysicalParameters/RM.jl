@@ -48,7 +48,7 @@ delta_rm = randn(100)  # Example differential rotation measure data
 rm = RM(delta_rm)
 println(rm)
 """
-RM(deltaRM::Array{Float64, 1}) = cumsum(deltaRM)
+RM(deltaRM::AbstractVector) = cumsum(deltaRM)
 
 """
     RM(deltaRM::Array{Float64, 3}) -> Array{Float64, 3}
@@ -71,4 +71,4 @@ delta_rm = randn(100, 100, 100)  # Example differential rotation measure data
 rm = RM(delta_rm)
 println(rm)
 """
-RM(deltaRM::Array{Float64, 3}) = cumsum(deltaRM,dims=3)
+RM(deltaRM::AbstractArray{<:Real, 3}) = cumsum(deltaRM, dims=3)

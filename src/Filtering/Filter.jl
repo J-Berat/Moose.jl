@@ -1,30 +1,92 @@
 """
-    HighPass(image, kernel)
+    apply_instrument_2d(img, H)
 
-Applies a high-pass filter to the input image.
-
-# Arguments
-- `image::AbstractArray`: The input image to be filtered.
-- `kernel::AbstractArray`: The kernel used for filtering the image.
-
-# Returns
-- `imagef::AbstractArray`: The high-pass filtered image.
-
-# Description
-This function performs high-pass filtering by first applying a low-pass filter to the image using the provided `kernel` and then subtracting the filtered image from the original image. The result is an image where high-frequency components (edges, fine details) are enhanced.
-
-# Example
-```julia
-using Images
-
-image = rand(256, 256)  # Example image
-kernel = ones(3, 3) / 9  # Example kernel for low-pass filtering
-
-filtered_image = HighPass(image, kernel)
-```
+Apply a 2D Fourier-domain instrumental mask. `H` is a binary transfer
+function with ones for sampled spatial frequencies and zeros for rejected
+frequencies, as in the instrumental filtering used by the Depolarization
+pipeline.
 """
-function HighPass(image, kernel)
-    filtered_image = imfilter(image, kernel)
-    imagef = image .- filtered_image
-    return imagef
+function apply_instrument_2d(img::AbstractMatrix, H::AbstractMatrix)
+    size(img) == size(H) || error("Filter shape mismatch: image size=$(size(img)) filter size=$(size(H))")
+    return real.(ifft(fft(img) .* H))
+end
+
+"""
+    apply_to_array_xy(data, H; n=size(H, 1), m=size(H, 2))
+
+Apply a Fourier-domain instrumental mask to a 2D image or to every sky-plane
+slice of a Stokes cube. Supported cube layouts are `(n, m, nν)` and
+`(nν, n, m)`.
+"""
+function apply_to_array_xy(data, H; n::Int=size(H, 1), m::Int=size(H, 2))
+    size(H) == (n, m) || error("Filter mask H must have size ($n,$m), got $(size(H))")
+    nd = ndims(data)
+
+    if nd == 2
+        size(data) == (n, m) || error("2D input must have size ($n,$m), got $(size(data))")
+        return apply_instrument_2d(data, H)
+    elseif nd == 3
+        sz = size(data)
+        Tout = float(eltype(data))
+        out = similar(data, Tout, sz)
+
+        if sz[1] == n && sz[2] == m
+            @views for k in axes(data, 3)
+                out[:, :, k] = apply_instrument_2d(data[:, :, k], H)
+            end
+            return out
+        elseif sz[2] == n && sz[3] == m
+            @views for k in axes(data, 1)
+                out[k, :, :] = apply_instrument_2d(data[k, :, :], H)
+            end
+            return out
+        else
+            error("Unsupported 3D shape $(sz). Expected (n,m,nν) or (nν,n,m) with n=$n m=$m.")
+        end
+    else
+        error("Unsupported ndims(data)=$nd")
+    end
+end
+
+"""
+    instrument_bandpass_L(n, m; Δx, Δy=Δx, Lcut_small, Llarge, fNy)
+
+Build a hard 0/1 spatial-frequency band-pass mask. The mask removes scales
+larger than `Llarge` and smaller than `Lcut_small`, capped at the Nyquist
+frequency `fNy`.
+"""
+function instrument_bandpass_L(n::Int, m::Int;
+                               Δx::Real, Δy::Real=Δx,
+                               Lcut_small::Real,
+                               Llarge::Real,
+                               fNy::Real)
+    n > 0 || error("n must be positive, got $n")
+    m > 0 || error("m must be positive, got $m")
+    Δx > 0 || error("Δx must be positive, got $Δx")
+    Δy > 0 || error("Δy must be positive, got $Δy")
+    Lcut_small > 0 || error("Lcut_small must be positive, got $Lcut_small")
+    Llarge > 0 || error("Llarge must be positive, got $Llarge")
+    fNy > 0 || error("fNy must be positive, got $fNy")
+
+    fx = FFTW.fftfreq(n, Δx)
+    fy = FFTW.fftfreq(m, Δy)
+
+    flo = 1 / Llarge
+    fhi_raw = 1 / Lcut_small
+    fhi = min(fhi_raw, fNy)
+
+    @debug "Band-pass filter frequencies" Lcut_small_pc=Lcut_small Llarge_pc=Llarge flo_pc_inv=flo fhi_pc_inv=fhi fhi_raw_pc_inv=fhi_raw
+
+    flo2 = flo^2
+    fhi2 = fhi^2
+    H = Matrix{Float32}(undef, n, m)
+    @inbounds for j in 1:m
+        fy2 = float(fy[j])^2
+        for i in 1:n
+            f2 = float(fx[i])^2 + fy2
+            H[i, j] = (f2 >= flo2 && f2 <= fhi2) ? 1f0 : 0f0
+        end
+    end
+
+    return H, fftshift(H)
 end

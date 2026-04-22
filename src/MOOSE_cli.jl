@@ -19,6 +19,12 @@ function parse_ne_option(value)
     return normalized
 end
 
+function parse_integer(name, value)
+    parsed = tryparse(Int, value)
+    parsed === nothing && throw_cli_error("$(name) expects an integer value, got '$(value)'.")
+    return parsed
+end
+
 function parse_cli_args(args)
     config_path = nothing
     quiet = false
@@ -105,6 +111,10 @@ function parse_cli_args(args)
             i += 1
             i > length(args) && throw_cli_error("--snr expects a value")
             overrides["SNR_nu"] = parse_numeric("--snr", args[i])
+        elseif arg == "--rng-seed"
+            i += 1
+            i > length(args) && throw_cli_error("--rng-seed expects an integer value")
+            overrides["rng_seed"] = parse_integer("--rng-seed", args[i])
         elseif arg == "--ne-option"
             i += 1
             i > length(args) && throw_cli_error("--ne-option expects 1, 2, or 3")

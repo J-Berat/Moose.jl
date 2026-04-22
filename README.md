@@ -15,6 +15,7 @@
 - [Input data requirements](#input-data-requirements)
 - [Outputs](#outputs)
 - [Troubleshooting](#troubleshooting)
+- [Citation](#citation)
 - [Contributors](#contributors)
 
 ---
@@ -23,7 +24,7 @@
 - Compute synchrotron Stokes parameters **I**, **Q**, and **U** with optional Faraday rotation and filtering.
 - Run **Rotation Measure Synthesis (RM Synthesis)** to explore Faraday depth structure.
 - Generate Faraday dispersion functions, polarization angles, and derived statistics.
-- Configure instrumental parameters (frequency coverage, box size, kernel filtering) interactively.
+- Configure instrumental parameters (frequency coverage, box size, interferometric Fourier filtering) interactively.
 - Run either interactively (`run_moose`) or non-interactively from JSON config (`src/MOOSE_cli.jl` / `MOOSE_from_config`).
 
 ---
@@ -100,6 +101,7 @@ Important behavior:
 - Without `--write-back`, CLI overrides are merged in-memory and executed from a temporary config file.
 - With `--write-back`, the provided config JSON is overwritten with merged values before execution.
 - This CLI is non-interactive: missing required values (for example `base_dir`, simulations, or interpolation path) produce an explicit error instead of prompts.
+- `--filtering Y --kernel-size <L>` applies a hard Fourier-domain 0/1 interferometric mask. The value `<L>` is the largest retained spatial scale in pixels, matching the filtering convention used in the Depolarization instrumental pipeline.
 
 ### Python front-end
 Prefer Python tooling? Use the lightweight wrapper in `python/moose_frontend.py`, which forwards familiar CLI flags to the Julia entrypoint:
@@ -108,7 +110,7 @@ Prefer Python tooling? Use the lightweight wrapper in `python/moose_frontend.py`
 python python/moose_frontend.py --simu /data/simulation --los z --quiet
 ```
 
-The wrapper accepts the same options documented for `src/MOOSE_cli.jl` (for example, `--conversionB`, `--filtering`, `--ne-option`, and positional or `--config` paths). The `--julia-binary` flag lets you point to a non-default Julia executable when needed.
+The wrapper accepts the same options documented for `src/MOOSE_cli.jl` (for example, `--conversionB`, `--filtering`, `--ne-option`, `--rng-seed`, and positional or `--config` paths). The `--julia-binary` flag lets you point to a non-default Julia executable when needed.
 
 By default, supplying a config file does **not** overwrite that file; overrides are applied through a temporary merged config. Add `--write-back` if you explicitly want to persist overrides into the provided config JSON.
 
@@ -165,7 +167,7 @@ julia --startup-file=no --project -e 'using Pkg; Pkg.test()'
    - `base_dir`, `simulations` or `chosen_simu`, `chosen_LOS`
    - `conversionB`, `conversionn`, `conversionT`
    - `FaradayRotation`, `phimin`, `phimax`, `dphi`
-   - `responseSynchrotron`, `kernel_size_synchrotron`
+- `responseSynchrotron`, `kernel_size_synchrotron` (largest Fourier scale retained by the interferometric 0/1 mask, in pixels)
    - `add_noise`, `SNR_nu`
    - `interpolation_file_path`
    - `ne_option`, `IonizationFraction`
@@ -174,10 +176,11 @@ julia --startup-file=no --project -e 'using Pkg; Pkg.test()'
 
 2. Nested keys (template/frontend style), as in `config/default_config.json`:
    - `freq.start|end|step`
-   - `box.size_pc|npix`
+   - `box.size_pc|npix` for cubic boxes, or `box.x|y|z` plus `box.npix` for LOS-dependent physical sizes
    - `faraday.enabled|phimin|phimax|dphi`
    - `emissivity.path`
    - `ne.mode|ion_fraction`
+   - `rng_seed` for reproducible noise injection
 
 Notes:
 - `base_dir` is required.
@@ -215,6 +218,11 @@ mv n.fits density.fits
 - **Cannot locate FITS cubes:** double-check filenames and working directory; the interactive prompts will echo the expected paths when they are missing.
 - **CLI exits with missing required fields:** ensure your JSON defines `base_dir`, at least one simulation (`simulations`/`chosen_simu`), and an emissivity path (`interpolation_file_path`/`emissivity.path`).
 - **Slow repeated runs:** keep `moose_config.json` alongside each dataset to skip prompts and reuse validated parameters.
+
+---
+
+## Citation
+If you use MOOSE, please cite the associated paper: [2026A&A...708A.245B](https://ui.adsabs.harvard.edu/abs/2026A%26A...708A.245B/abstract).
 
 ---
 
