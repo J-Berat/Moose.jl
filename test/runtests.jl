@@ -182,3 +182,37 @@ end
     _, _, _, overrides = parse_cli_args(["--rng-seed", "42"])
     @test overrides["rng_seed"] == 42
 end
+
+@testset "HEALPix support" begin
+    q_maps = [
+        MOOSE.healpix_map(fill(1.0, 12); order=:ring),
+        MOOSE.healpix_map(fill(0.5, 12); order=:ring),
+    ]
+    u_maps = [
+        MOOSE.healpix_map(fill(0.0, 12); order=:ring),
+        MOOSE.healpix_map(fill(0.25, 12); order=:ring),
+    ]
+
+    q_stack = MOOSE.HealpixStack(q_maps)
+    @test size(q_stack) == (12, 2)
+    @test q_stack.nside == 1
+    @test q_stack.order == :ring
+
+    result = MOOSE.RMSynthesisHealpix(q_stack, u_maps, [1.0e9, 1.1e9], [-10.0, 0.0, 10.0])
+    @test size(result.fdf) == (12, 3)
+    @test result.nside == 1
+    @test result.order == :ring
+    @test result.phi == [-10.0, 0.0, 10.0]
+
+    mktempdir() do dir
+        map_path = joinpath(dir, "q.fits")
+        MOOSE.write_healpix_map(map_path, q_stack[:, 1]; nside=q_stack.nside, order=q_stack.order)
+        reread = MOOSE.read_healpix_map(map_path)
+        @test collect(reread) == q_stack[:, 1]
+
+        paths = MOOSE.write_healpix_rm_result(joinpath(dir, "rm"), result; prefix="test")
+        @test length(paths.fdf) == 3
+        @test all(isfile, paths.fdf)
+        @test length(MOOSE.read_healpix_map(first(paths.fdf))) == 12
+    end
+end

@@ -9,6 +9,7 @@
 - [Project layout](#project-layout)
 - [Quickstart](#quickstart)
 - [Installation](#installation)
+- [Docker](#docker)
 - [Usage](#usage)
 - [Recommendations](#recommendations)
 - [Configuration file schemas](#configuration-file-schemas)
@@ -61,6 +62,41 @@ This installs dependencies, precompiles the package, and prints the interactive 
    This project tracks `Manifest.toml` for reproducible dependency resolution. Running `Pkg.instantiate()` will install the pinned dependency set for your platform.
 
 > **Note:** Some containerized or CI environments (including the one used for automated linting here) do not ship with Julia by default. In those cases, install Julia first or run commands on a machine where Julia is available before attempting to instantiate or test the project.
+
+---
+
+## Docker
+Build the Julia container from the repository root:
+
+```bash
+docker build -t moose-julia .
+```
+
+The image uses Julia 1.12.1 to match the checked-in `Manifest.toml`.
+
+The default command prints the built-in help:
+
+```bash
+docker run --rm moose-julia
+```
+
+For a config-driven run, mount the directory that contains your simulation data and config file, then call the Julia CLI inside the container:
+
+```bash
+docker run --rm \
+  -v /path/to/data:/data \
+  moose-julia \
+  julia --startup-file=no --project=/app /app/src/MOOSE_cli.jl /data/config.json --quiet
+```
+
+The image also includes `python3`, so the Python front-end can be used if preferred:
+
+```bash
+docker run --rm \
+  -v /path/to/data:/data \
+  moose-julia \
+  python3 /app/python/moose_frontend.py --config /data/config.json --quiet
+```
 
 ---
 
@@ -203,10 +239,30 @@ mv mag_field_x.fits Bx.fits
 mv n.fits density.fits
 ```
 
+### HEALPix maps
+
+MOOSE also exposes helpers for HEALPix maps through [Healpix.jl](https://github.com/JuliaAstro/Healpix.jl). This is useful when Q/U observations or mock products are already stored as one HEALPix FITS map per frequency:
+
+```julia
+using MOOSE
+
+q = read_healpix_stack(q_files)  # Npix x Nfreq
+u = read_healpix_stack(u_files)
+
+nu_hz = [120e6, 121e6, 122e6]
+phi = -50.0:0.5:50.0
+
+result = RMSynthesisHealpix(q, u, nu_hz, phi)
+write_healpix_rm_result("healpix_rm", result; prefix="lofar")
+```
+
+All maps in a stack must have the same `NSIDE`, ordering (`RING` or `NESTED`), and frequency order. You can also pass plain `Npix x Nfreq` matrices with `RMSynthesisHealpix(Q, U, nu_hz, phi; order=:ring)`.
+
 ---
 
 ## Outputs
 - Processed maps (Stokes parameters, RM maps, Faraday dispersion functions) are written alongside the simulations you choose.
+- HEALPix RM-synthesis outputs are written as one standard HEALPix FITS map per Faraday-depth slice.
 - A summary log `MOOSE_summary.log` is saved in the base directory, capturing simulations processed, lines of sight, and timing information.
 - Configuration choices are cached in `moose_config.json` to streamline subsequent runs.
 

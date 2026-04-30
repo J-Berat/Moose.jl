@@ -7,6 +7,7 @@ using CSV
 using DataFrames
 using Distributions
 using FITSIO
+using Healpix
 using StatsBase
 using Interpolations
 using Dierckx
@@ -25,6 +26,7 @@ include(joinpath("FileIO", "FITSUtils.jl"))
 include(joinpath("FileIO", "Header.jl"))
 include(joinpath("FileIO", "ReadSimulation.jl"))
 include(joinpath("FileIO", "WriteDataOnDisk.jl"))
+include(joinpath("FileIO", "HealpixIO.jl"))
 
 include(joinpath("PhysicalParameters", "ConversionJyBeamtoK.jl"))
 include(joinpath("PhysicalParameters", "BrightnessTemperature.jl"))
@@ -65,6 +67,9 @@ include(joinpath("SyntheticObservations", "MOOSE_from_config.jl"))
 
 using .MOOSEFromConfig: MOOSE_from_config
 
-export run_moose, MOOSE_from_config, MooseError, cli_error, config_error
+export run_moose, MOOSE_from_config, MooseError, cli_error, config_error,
+       HealpixStack, HealpixRMResult, RMSynthesisHealpix, healpix_map,
+       healpix_maps_from_stack, read_healpix_map, read_healpix_stack,
+       write_healpix_map, write_healpix_stack, write_healpix_rm_result
 
 end
