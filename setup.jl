@@ -32,7 +32,7 @@ function main(; run_tests::Bool=false)
         println("Skipping tests (pass --test to run them).")
     end
 
-    println("MOOSE is ready. You can now launch it with `using MOOSE; MOOSE()`.")
+    println("MOOSE is ready. You can now launch it with `using MOOSE; run_moose()`.")
 end
 
 main(run_tests = "--test" in ARGS)

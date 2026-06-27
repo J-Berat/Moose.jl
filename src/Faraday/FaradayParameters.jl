@@ -1,5 +1,5 @@
 function rmsynthesis_parameters(ν_min, ν_max, N)
-    println("[INFO] Input frequencies must be provided in Hz.")
+    @debug "Input frequencies must be provided in Hz."
 
     λ²_min = (C_m / ν_max)^2
     λ²_max = (C_m / ν_min)^2

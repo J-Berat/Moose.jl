@@ -144,10 +144,8 @@ function load_previous_config(config_path="moose_config.json")
     end
 end
 
-function save_config(config::Dict, config_path="moose_config.json")
-   open(config_path, "w") do io
-       write(io, JSON.json(config))
-   end
+function save_config(config::AbstractDict, config_path="moose_config.json")
+   atomic_write_text(config_path, JSON.json(config))
 end
 
 function format_duration(elapsed)
@@ -163,7 +161,7 @@ function format_duration(elapsed)
     return string(padded_hours, ":", padded_minutes, ":", padded_seconds, ".", padded_ms)
 end
 
-function write_summary_log(base_dir, chosen_simu, chosen_LOS, elapsed; config_path="moose_config.json", faraday="N", responseSynchrotron="N", add_noise="N", interpolation_file_path=nothing, conversionB=nothing, conversionn=nothing, conversionT=nothing, ne_option=nothing, rng_seed=nothing)
+function write_summary_log(base_dir, chosen_simu, chosen_LOS, elapsed; config_path="moose_config.json", config_source_path=nothing, config_saved_path=config_path, faraday="N", responseSynchrotron="N", add_noise="N", interpolation_file_path=nothing, conversionB=nothing, conversionn=nothing, conversionT=nothing, ne_option=nothing, rng_seed=nothing, config_hash=nothing)
     log_path = joinpath(base_dir, "MOOSE_summary.log")
     open(log_path, "a") do io
         println(io)
@@ -177,7 +175,10 @@ function write_summary_log(base_dir, chosen_simu, chosen_LOS, elapsed; config_pa
         println(io, "Lines of sight: $(join(chosen_LOS, ", "))")
         println(io, "Output directory: $base_dir")
         println(io, "Total execution time: $(format_duration(elapsed))")
-        println(io, "Config file: $(config_path)")
+        println(io, "Config read: $(config_source_path === nothing ? "<none>" : config_source_path)")
+        println(io, "Config effective: $(config_path)")
+        println(io, "Config saved: $(config_saved_path === nothing ? "<not written>" : config_saved_path)")
+        config_hash !== nothing && println(io, "Config hash: $(config_hash)")
         conversionB !== nothing && println(io, "Conversion B (to μG): $(conversionB)")
         conversionn !== nothing && println(io, "Conversion n (to cm^-3): $(conversionn)")
         conversionT !== nothing && println(io, "Conversion T (to K): $(conversionT)")
@@ -195,9 +196,16 @@ const LOSIntTuple = NamedTuple{(:x, :y, :z), Tuple{Int, Int, Int}}
 
 function _get_axis_value(values::AbstractDict, names, default)
     for name in names
-        haskey(values, name) && return values[name]
         string_name = String(name)
-        haskey(values, string_name) && return values[string_name]
+        try
+            haskey(values, string_name) && return values[string_name]
+        catch
+        end
+
+        try
+            haskey(values, name) && return values[name]
+        catch
+        end
     end
 
     return default
@@ -255,6 +263,19 @@ function los_axis_value(values::NamedTuple, los::AbstractString)
     axis = Symbol(lowercase(String(los)))
     axis in (:x, :y, :z) || throw_config_error("Invalid line of sight: $(los). Allowed values are x, y, or z."; code=:invalid_los)
     return getproperty(values, axis)
+end
+
+function los_cube_shape(values::NamedTuple, los::AbstractString)
+    los_norm = lowercase(String(los))
+    if los_norm == "z"
+        return (values.x, values.y, values.z)
+    elseif los_norm == "x"
+        return (values.y, values.z, values.x)
+    elseif los_norm == "y"
+        return (values.z, values.x, values.y)
+    end
+
+    throw_config_error("Invalid line of sight: $(los). Allowed values are x, y, or z."; code=:invalid_los)
 end
 
 function axis_values_for_json(values::NamedTuple)
@@ -430,17 +451,17 @@ end
 
 const DEFAULT_WOLFIRE_CONSTANTS = (2.5e-16, 1.0, 0.5, 1.4e-4)
 
-function run_moose_processing(cfg::RunConfig; quiet::Bool = false, persisted_config::Union{Nothing, Dict} = nothing)
+function run_moose_processing(cfg::RunConfig; quiet::Bool = false, persisted_config::Union{Nothing, AbstractDict} = nothing, source_config_path=nothing, saved_config_path=cfg.config_path, write_config_file::Bool=true)
     if quiet
         with_logger(NullLogger()) do
-            _run_moose_processing(cfg; quiet = quiet, persisted_config = persisted_config)
+            _run_moose_processing(cfg; quiet = quiet, persisted_config = persisted_config, source_config_path = source_config_path, saved_config_path = saved_config_path, write_config_file = write_config_file)
         end
     else
-        _run_moose_processing(cfg; quiet = quiet, persisted_config = persisted_config)
+        _run_moose_processing(cfg; quiet = quiet, persisted_config = persisted_config, source_config_path = source_config_path, saved_config_path = saved_config_path, write_config_file = write_config_file)
     end
 end
 
-function _run_moose_processing(cfg::RunConfig; quiet::Bool = false, persisted_config::Union{Nothing, Dict} = nothing)
+function _run_moose_processing(cfg::RunConfig; quiet::Bool = false, persisted_config::Union{Nothing, AbstractDict} = nothing, source_config_path=nothing, saved_config_path=cfg.config_path, write_config_file::Bool=true)
     nuArray = range(start = cfg.nustart, stop = cfg.nuend, step = cfg.dnu)
     PhiArray = cfg.faraday_rotation == "Y" ? range(start = cfg.phimin, stop = cfg.phimax, step = cfg.dphi) : nothing
     PixelLength_pc, PixelLength_cm, DistanceArray = los_pixel_scale(cfg.BoxLength_pc.x, cfg.BoxLength_pix.x)
@@ -455,6 +476,33 @@ function _run_moose_processing(cfg::RunConfig; quiet::Bool = false, persisted_co
     end
 
     start_time = now()
+    config_to_save = persisted_config === nothing ? config_dict_from_struct(cfg) : persisted_config
+    config_hash = moose_config_hash(config_to_save)
+    base_metadata = Dict{String, Any}(
+        "MOOSEV" => moose_version(),
+        "GITHASH" => moose_git_hash(),
+        "CFGHASH" => config_hash,
+        "CFGSRC" => source_config_path === nothing ? "" : String(source_config_path),
+        "CFGSAVE" => saved_config_path === nothing ? "" : String(saved_config_path),
+        "FARADAY" => cfg.faraday_rotation,
+        "FILTER" => cfg.responseSynchrotron,
+        "NOISE" => cfg.add_noise,
+        "SNRNU" => cfg.SNR_nu,
+        "RNGSEED" => cfg.rng_seed,
+        "NSTART" => cfg.nustart,
+        "NUEND" => cfg.nuend,
+        "DNU" => cfg.dnu,
+        "NUNIT" => "MHz input; Hz FITS",
+        "PHIMIN" => cfg.phimin,
+        "PHIMAX" => cfg.phimax,
+        "DPHI" => cfg.dphi,
+        "PHIUNIT" => "rad/m^2",
+        "CONVB" => cfg.conversionB,
+        "CONVN" => cfg.conversionn,
+        "CONVT" => cfg.conversionT,
+        "NEOPT" => cfg.ne_option,
+        "INTFILE" => cfg.interpolation_file_path,
+    )
     if cfg.ne_option == "3"
         missing_cubes = [simu for simu in cfg.simulations if !isfile(joinpath(simu, "densityHp.fits"))]
         !isempty(missing_cubes) && throw_config_error(
@@ -478,6 +526,7 @@ function _run_moose_processing(cfg::RunConfig; quiet::Bool = false, persisted_co
             @info "Processing line of sight" los = LOS
             box_length_pc = los_axis_value(cfg.BoxLength_pc, LOS)
             box_length_pix = los_axis_value(cfg.BoxLength_pix, LOS)
+            expected_shape = los_cube_shape(cfg.BoxLength_pix, LOS)
             PixelLength_pc, PixelLength_cm, DistanceArray = los_pixel_scale(box_length_pc, box_length_pix)
 
             if cfg.ne_option == "1"
@@ -485,17 +534,17 @@ function _run_moose_processing(cfg::RunConfig; quiet::Bool = false, persisted_co
                 ProcessSynchrotron(simu, LOS, cfg.faraday_rotation, cfg.responseSynchrotron, df, cfg.add_noise, cfg.SNR_nu,
                     cfg.kernel_size_synchrotron, zeta, Geff, omegaPAH, XC, nuArray, PhiArray, PixelLength_pc, PixelLength_cm,
                     box_length_pc, DistanceArray, cfg.conversionn, cfg.conversionT, cfg.conversionB;
-                    log_progress = cfg.log_progress, rng = rng)
+                    log_progress = cfg.log_progress, rng = rng, expected_shape = expected_shape, metadata = base_metadata)
             elseif cfg.ne_option == "2"
                 ProcessSynchrotron(simu, LOS, cfg.faraday_rotation, cfg.responseSynchrotron, df, cfg.add_noise, cfg.SNR_nu,
                     cfg.kernel_size_synchrotron, ion_fraction, nuArray, PhiArray, PixelLength_pc, PixelLength_cm,
                     box_length_pc, DistanceArray, cfg.conversionn, cfg.conversionT, cfg.conversionB;
-                    log_progress = cfg.log_progress, rng = rng)
+                    log_progress = cfg.log_progress, rng = rng, expected_shape = expected_shape, metadata = base_metadata)
             else
                 ProcessSynchrotron(simu, LOS, cfg.faraday_rotation, cfg.responseSynchrotron, df, cfg.add_noise, cfg.SNR_nu,
                     cfg.kernel_size_synchrotron, nuArray, PhiArray, PixelLength_pc, PixelLength_cm,
                     box_length_pc, DistanceArray, cfg.conversionn, cfg.conversionT, cfg.conversionB;
-                    log_progress = cfg.log_progress, rng = rng)
+                    log_progress = cfg.log_progress, rng = rng, expected_shape = expected_shape, metadata = base_metadata)
             end
         end
 
@@ -510,9 +559,9 @@ function _run_moose_processing(cfg::RunConfig; quiet::Bool = false, persisted_co
     elapsed = now() - start_time
     @info "Summary" simulations = join(cfg.simulations, ", ") los = join(cfg.chosen_LOS, ", ") output_directory = cfg.base_dir elapsed = format_duration(elapsed)
 
-    config_to_save = persisted_config === nothing ? config_dict_from_struct(cfg) : persisted_config
-    save_config(config_to_save, cfg.config_path)
+    write_config_file && save_config(config_to_save, cfg.config_path)
     write_summary_log(cfg.base_dir, map(basename, cfg.simulations), cfg.chosen_LOS, elapsed; config_path=cfg.config_path,
+        config_source_path=source_config_path, config_saved_path=saved_config_path, config_hash=config_hash,
         faraday=cfg.faraday_rotation, responseSynchrotron=cfg.responseSynchrotron, add_noise=cfg.add_noise,
         interpolation_file_path=cfg.interpolation_file_path, conversionB=cfg.conversionB, conversionn=cfg.conversionn,
         conversionT=cfg.conversionT, ne_option=cfg.ne_option, rng_seed=cfg.rng_seed)
@@ -593,21 +642,27 @@ function run_moose_interactive(; quiet::Bool = false, reset_config::Bool = true)
     end
 
     base_dir = ""
+    simu_list = String[]
     while true
         candidate_dir = ask_user("Enter the base directory for simulations", get(config, "base_dir", pwd()))
         validation_error = ensure_directory_access(candidate_dir)
-        if validation_error === nothing
-            base_dir = candidate_dir
-            break
-        else
+        if validation_error !== nothing
             println(validation_error)
+            continue
         end
+
+        candidate_list = get_simulation_list(candidate_dir)
+        if isempty(candidate_list)
+            println("[Warning] No simulations containing FITS files were found in $(candidate_dir). Please enter another path.")
+            continue
+        end
+
+        base_dir = candidate_dir
+        simu_list = candidate_list
+        break
     end
     config["base_dir"] = base_dir
 
-    simu_list = get_simulation_list(base_dir)
-    isempty(simu_list) && throw_config_error("No simulations containing FITS files were found in $(base_dir).";
-        code=:missing_simulation)
     display_simulations(simu_list)
 
     simu_prompt = "Enter 'all' to process all simulations or provide comma-separated indices (e.g., 1,3,5):"

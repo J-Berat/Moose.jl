@@ -26,6 +26,25 @@ Reads and processes simulation data from FITS files for a specified line of sigh
   - `nHp::Union{AbstractArray, Nothing}`: Ionized hydrogen density array (or `nothing` if the file is not present).
 """
 
+"""
+    los_basis(Ax, Ay, Az, LOS) -> (A1, A2, ALOS)
+
+Map cartesian vector components onto the right-handed (plane-of-sky ⊕ LOS)
+basis using cyclic permutations (determinant +1, chirality preserved):
+LOS = "z" → (Ax, Ay, Az) ; LOS = "x" → (Ay, Az, Ax) ; LOS = "y" → (Az, Ax, Ay).
+
+This is the single source of truth for the LOS frame convention: the intrinsic
+polarization angle ψ_src = atan(A2, A1) + π/2 is only consistent across the
+three lines of sight if the same orientation-preserving mapping is used
+everywhere.
+"""
+function los_basis(Ax, Ay, Az, LOS::AbstractString)
+    LOS == "z" && return (Ax, Ay, Az)
+    LOS == "x" && return (Ay, Az, Ax)
+    LOS == "y" && return (Az, Ax, Ay)
+    error("Unknown LOS: $LOS (expected \"x\", \"y\" or \"z\")")
+end
+
 function validate_required_fits(file)
     validation_error = ensure_readable_file(file; expected_exts=[".fits"])
     validation_error === nothing || error(validation_error)
@@ -35,7 +54,7 @@ function read_required_cube(file, conversion)
     validate_required_fits(file)
 
     try
-        return read_file(file, conversion)
+        return read_file(file, conversion; expected_ndims=3)
     catch err
         error(user_error_message(:corrupted_file, file; reason=string(err)))
     end
@@ -50,7 +69,7 @@ function read_optional_cube(file, conversion, LOS)
     validation_error === nothing || error(validation_error)
 
     try
-        return permute_dims(read_file(file, conversion), LOS)
+        return permute_dims(read_file(file, conversion; expected_ndims=3), LOS)
     catch err
         error(user_error_message(:corrupted_file, file; reason=string(err)))
     end
@@ -79,13 +98,13 @@ function ReadSimulation(simu, LOS, conversionn, conversionT, conversionV, conver
     nH2 = read_optional_cube(filenH2, conversionn, LOS)
     nHp = read_optional_cube(filenHp, conversionn, LOS)
 
-    B1, B2, BLOS = LOS == "z" ? (read_required_cube(fileBx, conversionB), read_required_cube(fileBy, conversionB), read_required_cube(fileBz, conversionB)) :
-                    LOS == "y" ? (read_required_cube(fileBz, conversionB), read_required_cube(fileBx, conversionB), read_required_cube(fileBy, conversionB)) :
-                                 (read_required_cube(fileBy, conversionB), read_required_cube(fileBz, conversionB), read_required_cube(fileBx, conversionB))
+    B1, B2, BLOS = los_basis(read_required_cube(fileBx, conversionB),
+                             read_required_cube(fileBy, conversionB),
+                             read_required_cube(fileBz, conversionB), LOS)
 
-    V1, V2, VLOS = LOS == "z" ? (read_required_cube(fileVx, conversionV), read_required_cube(fileVy, conversionV), read_required_cube(fileVz, conversionV)) :
-                    LOS == "y" ? (read_required_cube(fileVz, conversionV), read_required_cube(fileVx, conversionV), read_required_cube(fileVy, conversionV)) :
-                                 (read_required_cube(fileVy, conversionV), read_required_cube(fileVz, conversionV), read_required_cube(fileVx, conversionV))
+    V1, V2, VLOS = los_basis(read_required_cube(fileVx, conversionV),
+                             read_required_cube(fileVy, conversionV),
+                             read_required_cube(fileVz, conversionV), LOS)
 
     B1, B2, BLOS = permute_dims(B1, LOS), permute_dims(B2, LOS), permute_dims(BLOS, LOS)
     V1, V2, VLOS = permute_dims(V1, LOS), permute_dims(V2, LOS), permute_dims(VLOS, LOS)
@@ -114,13 +133,12 @@ function ReadSimulation(simu, LOS, conversionn, conversionT, conversionB)
     nH2 = read_optional_cube(filenH2, conversionn, LOS)
     nHp = read_optional_cube(filenHp, conversionn, LOS)
 
-    B1, B2, BLOS = LOS == "z" ? (read_required_cube(fileBx, conversionB), read_required_cube(fileBy, conversionB), read_required_cube(fileBz, conversionB)) :
-                    LOS == "y" ? (read_required_cube(fileBx, conversionB), read_required_cube(fileBz, conversionB), read_required_cube(fileBy, conversionB)) :
-                                 (read_required_cube(fileBy, conversionB), read_required_cube(fileBz, conversionB), read_required_cube(fileBx, conversionB))
+    B1, B2, BLOS = los_basis(read_required_cube(fileBx, conversionB),
+                             read_required_cube(fileBy, conversionB),
+                             read_required_cube(fileBz, conversionB), LOS)
 
     B1, B2, BLOS = permute_dims(B1, LOS), permute_dims(B2, LOS), permute_dims(BLOS, LOS)
     T, n = permute_dims(T, LOS), permute_dims(n, LOS)
 
     return (B1, B2, BLOS, T, n, nH2, nHp)
 end
-

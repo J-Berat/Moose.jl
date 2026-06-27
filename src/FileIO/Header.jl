@@ -38,7 +38,28 @@ specarray = [1.0, 2.0, 3.0]
 
 header = buildHeader3D(naxis, size, ctype1, ctype2, ctype3, cunit1, cunit2, cunit3, bunit, specarray)
 """
-function buildHeader3D(naxis, size, ctype1, ctype2, ctype3, cunit1, cunit2, cunit3, bunit, specarray)
+function _fits_header_value(value)
+    value === nothing && return nothing
+    value isa Number && return value
+    value isa Bool && return value ? "true" : "false"
+
+    text = String(value)
+    return length(text) <= 68 ? text : text[1:68]
+end
+
+function annotate_header!(header, metadata)
+    metadata === nothing && return header
+
+    for (key, value) in metadata
+        header_value = _fits_header_value(value)
+        header_value === nothing && continue
+        header[uppercase(String(key))[1:min(end, 8)]] = header_value
+    end
+
+    return header
+end
+
+function buildHeader3D(naxis, size, ctype1, ctype2, ctype3, cunit1, cunit2, cunit3, bunit, specarray; metadata=nothing)
     
     header = FITSHeader(["NAXIS"], [naxis], [""])
 
@@ -61,11 +82,13 @@ function buildHeader3D(naxis, size, ctype1, ctype2, ctype3, cunit1, cunit2, cuni
     header["CTYPE3"] = ctype3
     header["CRVAL3"] = specarray[1]
     header["CRPIX3"] = 1
-    header["CDELT3"] = specarray[2] - specarray[1]
+    header["CDELT3"] = length(specarray) >= 2 ? specarray[2] - specarray[1] : 0.0
     header["CUNIT3"] = cunit3
     header["BLENGTH"] = length(specarray)
 
     header["BUNIT"] = bunit
+
+    annotate_header!(header, metadata)
 
     return header
 end
@@ -104,7 +127,7 @@ bunit = "Jy/beam"
 
 header = buildHeader2D(naxis, size, ctype1, ctype2, cunit1, cunit2, bunit)
 """
-function buildHeader2D(naxis, size, ctype1, ctype2, cunit1, cunit2, bunit)
+function buildHeader2D(naxis, size, ctype1, ctype2, cunit1, cunit2, bunit; metadata=nothing)
     
     header = FITSHeader(["NAXIS"], [naxis], [""])
 
@@ -125,5 +148,7 @@ function buildHeader2D(naxis, size, ctype1, ctype2, cunit1, cunit2, bunit)
 
     header["BUNIT"] = bunit
 
+    annotate_header!(header, metadata)
+
     return header
-end 
+end

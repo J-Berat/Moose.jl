@@ -11,6 +11,7 @@
 - [Installation](#installation)
 - [Docker](#docker)
 - [Usage](#usage)
+- [Public API](#public-api)
 - [Recommendations](#recommendations)
 - [Configuration file schemas](#configuration-file-schemas)
 - [Input data requirements](#input-data-requirements)
@@ -134,7 +135,7 @@ julia --startup-file=no --project src/MOOSE_cli.jl /path/to/config.json --quiet
 You can also provide or override values directly with flags such as `--base-dir`, `--simu`, `--los`, `--interpolation`, `--faraday`, `--filtering`, `--noise`, and `--ne-option`.
 
 Important behavior:
-- Without `--write-back`, CLI overrides are merged in-memory and executed from a temporary config file.
+- Without `--write-back`, CLI overrides are merged in-memory. The summary log records the config that was read, the effective in-memory config label, and that no config was saved.
 - With `--write-back`, the provided config JSON is overwritten with merged values before execution.
 - This CLI is non-interactive: missing required values (for example `base_dir`, simulations, or interpolation path) produce an explicit error instead of prompts.
 - `--filtering Y --kernel-size <L>` applies a hard Fourier-domain 0/1 interferometric mask. The value `<L>` is the largest retained spatial scale in pixels, matching the filtering convention used in the Depolarization instrumental pipeline.
@@ -148,7 +149,7 @@ python python/moose_frontend.py --simu /data/simulation --los z --quiet
 
 The wrapper accepts the same options documented for `src/MOOSE_cli.jl` (for example, `--conversionB`, `--filtering`, `--ne-option`, `--rng-seed`, and positional or `--config` paths). The `--julia-binary` flag lets you point to a non-default Julia executable when needed.
 
-By default, supplying a config file does **not** overwrite that file; overrides are applied through a temporary merged config. Add `--write-back` if you explicitly want to persist overrides into the provided config JSON.
+By default, supplying a config file does **not** overwrite that file; overrides are applied in memory. Add `--write-back` if you explicitly want to persist overrides into the provided config JSON.
 
 For quick validation, `--print-command` shows the fully composed Julia invocation before running it, and `--dry-run` prints the command and exits without launching Julia. You can also add `--log-file /path/to/invocations.jsonl` to append one JSONL entry per run.
 
@@ -170,6 +171,18 @@ julia --startup-file=no --project -e 'using Pkg; Pkg.test()'
 - **Interactive end-to-end run:** follow the standard `run_moose()` workflow described above with a real simulation directory. Success is indicated by FITS outputs next to your simulation files and a `MOOSE_summary.log` entry summarizing the run.
 - **Config-driven batch run:** prepare a JSON config (for example by saving answers from a previous interactive session) and run `julia --project src/MOOSE_cli.jl /path/to/config.json --quiet`. This reuses stored parameters and will append to `MOOSE_summary.log` on completion. Pass `--write-back` only when you want CLI overrides persisted into that config file.
 - **Use the provided template:** copy `config/default_config.json`, update paths/constants (`base_dir`, `simulations`, conversion factors, frequencies, Faraday/noise/filter flags), then run it with the CLI. The config loader now validates required fields and fails fast with explicit errors if a value is invalid.
+
+---
+
+## Public API
+The stable Julia API is the set of names exported by `using MOOSE`:
+
+- `run_moose` for the interactive workflow.
+- `MOOSE_from_config` for JSON-driven batch runs.
+- `MooseError`, `cli_error`, and `config_error` for user-facing failures.
+- HEALPix helpers: `HealpixStack`, `HealpixRMResult`, `RMSynthesisHealpix`, `healpix_map`, `healpix_maps_from_stack`, `read_healpix_map`, `read_healpix_stack`, `write_healpix_map`, `write_healpix_stack`, and `write_healpix_rm_result`.
+
+Other qualified names such as `MOOSE.RMS`, `MOOSE.Pnu`, or `MOOSE.buildHeader3D` are internal implementation details. They are tested for regression coverage, but they are not yet promised as stable external API.
 
 ---
 
@@ -203,7 +216,7 @@ julia --startup-file=no --project -e 'using Pkg; Pkg.test()'
    - `base_dir`, `simulations` or `chosen_simu`, `chosen_LOS`
    - `conversionB`, `conversionn`, `conversionT`
    - `FaradayRotation`, `phimin`, `phimax`, `dphi`
-- `responseSynchrotron`, `kernel_size_synchrotron` (largest Fourier scale retained by the interferometric 0/1 mask, in pixels)
+   - `responseSynchrotron`, `kernel_size_synchrotron` (largest Fourier scale retained by the interferometric 0/1 mask, in pixels)
    - `add_noise`, `SNR_nu`
    - `interpolation_file_path`
    - `ne_option`, `IonizationFraction`
@@ -223,6 +236,10 @@ Notes:
 - Simulations are required (`simulations` or `chosen_simu`).
 - Emissivity path is required (`interpolation_file_path` or `emissivity.path`).
 - Relative simulation paths and emissivity paths are resolved against `base_dir`.
+- Config frequency values (`nustart`, `nuend`, `dnu`, or `freq.start|end|step`) are in MHz.
+- FITS spectral axes are written in Hz (`CUNIT3 = "Hz"`), after a single MHz-to-Hz conversion at write time.
+- Faraday depth values are in `rad/m^2`.
+- Box lengths are in parsec and pixel counts are dimensionless.
 
 ---
 
@@ -265,6 +282,7 @@ All maps in a stack must have the same `NSIDE`, ordering (`RING` or `NESTED`), a
 - HEALPix RM-synthesis outputs are written as one standard HEALPix FITS map per Faraday-depth slice.
 - A summary log `MOOSE_summary.log` is saved in the base directory, capturing simulations processed, lines of sight, and timing information.
 - Configuration choices are cached in `moose_config.json` to streamline subsequent runs.
+- FITS headers include reproducibility metadata such as MOOSE version, git hash, config hash, config provenance, line of sight, run options, and key unit conventions.
 
 ---
 

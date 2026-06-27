@@ -39,6 +39,6 @@ function CreateFreqFile(start_freq_Hz, end_freq_Hz, num_freq, repertory)
         end
     end
 
-    println("Your file $path has been created.")
+    @info "Frequency file created" path = path
     
 end

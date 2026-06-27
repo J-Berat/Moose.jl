@@ -15,12 +15,15 @@ using FFTW
 using LinearAlgebra
 using Logging
 using Random
+using SHA
+using TOML
 
 include(joinpath("Utils", "ArrayMath.jl"))
 include(joinpath("Utils", "Prompts.jl"))
 include(joinpath("Utils", "Progress.jl"))
 include(joinpath("Utils", "Errors.jl"))
 include(joinpath("Utils", "InputValidation.jl"))
+include(joinpath("Utils", "AtomicWrite.jl"))
 
 include(joinpath("FileIO", "FITSUtils.jl"))
 include(joinpath("FileIO", "Header.jl"))
@@ -67,9 +70,63 @@ include(joinpath("SyntheticObservations", "MOOSE_from_config.jl"))
 
 using .MOOSEFromConfig: MOOSE_from_config
 
+# Stable public API: names exported below are the compatibility surface. Other
+# `MOOSE.foo` bindings are implementation details, even when regression tests
+# exercise them through qualified access.
 export run_moose, MOOSE_from_config, MooseError, cli_error, config_error,
        HealpixStack, HealpixRMResult, RMSynthesisHealpix, healpix_map,
        healpix_maps_from_stack, read_healpix_map, read_healpix_stack,
        write_healpix_map, write_healpix_stack, write_healpix_rm_result
+
+const MOOSE_PROJECT_ROOT = normpath(joinpath(@__DIR__, ".."))
+
+function moose_version()
+    project_path = joinpath(MOOSE_PROJECT_ROOT, "Project.toml")
+    try
+        return String(get(TOML.parsefile(project_path), "version", "unknown"))
+    catch
+        return "unknown"
+    end
+end
+
+function moose_git_hash()
+    git = Sys.which("git")
+    git === nothing && return "unknown"
+
+    try
+        revision = readchomp(`$git -C $MOOSE_PROJECT_ROOT rev-parse --short=12 HEAD`)
+        dirty = success(`$git -C $MOOSE_PROJECT_ROOT diff --quiet --ignore-submodules HEAD`) ? "" : "+dirty"
+        return revision * dirty
+    catch
+        return "unknown"
+    end
+end
+
+function _canonical_json(value)
+    if value isa AbstractDict
+        parts = String[]
+        for key in sort(collect(keys(value)); by = string)
+            push!(parts, JSON.json(string(key)) * ":" * _canonical_json(value[key]))
+        end
+        return "{" * join(parts, ",") * "}"
+    elseif value isa NamedTuple
+        parts = String[]
+        for key in sort(collect(keys(value)); by = string)
+            push!(parts, JSON.json(string(key)) * ":" * _canonical_json(value[key]))
+        end
+        return "{" * join(parts, ",") * "}"
+    elseif value isa Tuple
+        return "[" * join((_canonical_json(item) for item in value), ",") * "]"
+    elseif value isa AbstractVector
+        return "[" * join((_canonical_json(item) for item in value), ",") * "]"
+    else
+        return JSON.json(value)
+    end
+end
+
+function moose_config_hash(config::AbstractDict)
+    compact_json = _canonical_json(config)
+    return bytes2hex(sha256(Vector{UInt8}(codeunits(compact_json))))
+end
 
 end

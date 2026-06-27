@@ -68,14 +68,17 @@ function instrument_bandpass_L(n::Int, m::Int;
     Llarge > 0 || error("Llarge must be positive, got $Llarge")
     fNy > 0 || error("fNy must be positive, got $fNy")
 
-    fx = FFTW.fftfreq(n, Δx)
-    fy = FFTW.fftfreq(m, Δy)
+    # fftfreq(n, fs) expects the *sampling frequency* fs = 1/Δx, not the step Δx.
+    # Spatial frequencies are then in cycles per unit of Δx (same unit as
+    # Lcut_small/Llarge, which must be expressed in that same length unit).
+    fx = FFTW.fftfreq(n, 1 / Δx)
+    fy = FFTW.fftfreq(m, 1 / Δy)
 
     flo = 1 / Llarge
     fhi_raw = 1 / Lcut_small
     fhi = min(fhi_raw, fNy)
 
-    @debug "Band-pass filter frequencies" Lcut_small_pc=Lcut_small Llarge_pc=Llarge flo_pc_inv=flo fhi_pc_inv=fhi fhi_raw_pc_inv=fhi_raw
+    @debug "Band-pass filter frequencies" Lcut_small=Lcut_small Llarge=Llarge flo=flo fhi=fhi fhi_raw=fhi_raw
 
     flo2 = flo^2
     fhi2 = fhi^2

@@ -3,7 +3,7 @@ const ELECTRON_ENERGY_AT_REST_eV = 0.511e6 # eV electron energy at rest
 const EMIN = 1e6 # minimum eV energy on the energy spectrum Padovani2021
 const EMAX = 1e11 # maximum eV energy on the energy spectrum Padovani2021
 const E_0 = 710e6 # eV Padovani 2021 SKA cf eq6
-const C_m = 2.99792458e8 # speed of light in cm.s^-1
+const C_m = 2.99792458e8 # speed of light in m.s^-1
 
 # in CGS
 const E_CHARGE = 4.8032e-10 # electron charge in cm^3/2 g^1/2 s^-1 (esu-CGS)

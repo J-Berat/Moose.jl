@@ -33,36 +33,63 @@ struct TemperatureInterpolator
 end
 
 function TemperatureInterpolator(df::DataFrame)
-    B = collect(unique(df.B))
-    nu = collect(unique(df.nu))
-    eps = reshape(df.e_para .+ df.e_perp, (length(nu), length(B)))
+    B, nu, eps = emissivity_grid(df, df.e_para .+ df.e_perp)
     eps_interp = Spline2D(B, nu, eps)
     return TemperatureInterpolator(B, eps_interp)
 end
 
-function emissivity_total_at_frequency!(buffer, B::Vector{Float64}, eps_interp::Spline2D, Bperp::AbstractArray, nui)
-    eps_i = @. eps_interp(B, nui)
-    eps_i_interp = linear_interpolation(B, eps_i, extrapolation_bc = Line())
-    buffer .= @. eps_i_interp(Bperp)
+function build_emissivity_frequency_cache(interpolator::TemperatureInterpolator, nuArray)
+    Nfreq = length(nuArray)
+    B = interpolator.B
+    cache = Matrix{Float64}(undef, length(B), Nfreq)
+    @inbounds for i in 1:Nfreq
+        nui = nuArray[i]
+        for j in eachindex(B)
+            cache[j, i] = interpolator.eps_interp(B[j], nui)
+        end
+    end
+    return cache
+end
+
+function emissivity_total_at_frequency!(buffer, B::Vector{Float64}, eps_interp::Spline2D, Bperp::AbstractArray, nui;
+    eps_cache_col=nothing, eps_line_buffer=nothing)
+    eps_i = eps_cache_col
+    if eps_i === nothing
+        eps_i = eps_line_buffer
+        @inbounds for j in eachindex(B)
+            eps_i[j] = eps_interp(B[j], nui)
+        end
+    end
+
+    @inbounds for idx in eachindex(Bperp, buffer)
+        buffer[idx] = linear_interp_extrapolated(B, eps_i, Float64(Bperp[idx]))
+    end
+
     return buffer
 end
 
-function Tnu(Bperp, nuArray, df, PixelLength_cm; precomputed_interp = nothing)
+function _Tnu!(T_nu, Bperp, nuArray, PixelLength_cm, interpolator; emissivity_cache=nothing)
+    eps_buffer = similar(Bperp, Float64)
+    eps_line_buffer = emissivity_cache === nothing ? similar(interpolator.B, Float64) : nothing
+
+    for i in eachindex(nuArray)
+        nui = nuArray[i]
+        cache_col = emissivity_cache === nothing ? nothing : view(emissivity_cache, :, i)
+        emissivity_total_at_frequency!(eps_buffer, interpolator.B, interpolator.eps_interp, Bperp, nui;
+            eps_cache_col=cache_col, eps_line_buffer=eps_line_buffer)
+
+        Inui = sum(eps_buffer) * PixelLength_cm
+        T_nu[i] = BrightnessTemperature(nui, Inui)
+    end
+
+    return T_nu
+end
+
+function Tnu(Bperp, nuArray, df, PixelLength_cm; precomputed_interp = nothing, emissivity_cache=nothing)
     interpolator = precomputed_interp === nothing ? TemperatureInterpolator(df) : precomputed_interp
     Nfreq = length(nuArray)
     T_nu = zeros(Nfreq)
-    eps_buffer = similar(Bperp, Float64)
-
-    # Tnu computation
-    for i in 1:Nfreq
-        nui = nuArray[i]
-
-        emissivity_total_at_frequency!(eps_buffer, interpolator.B, interpolator.eps_interp, Bperp, nui)
-
-        Inui = sum(eps_buffer) .* PixelLength_cm
-        T_nu[i] = BrightnessTemperature(nui, Inui)
-    end
-    return T_nu
+    return _Tnu!(T_nu, Bperp, nuArray, PixelLength_cm, interpolator; emissivity_cache=emissivity_cache)
 
 end
 
@@ -100,10 +127,13 @@ function Tnu3D(Bperpcube, nuArray, df, PixelLength_cm)
     Nfreq = length(nuArray)
     T_nu = zeros(nx, ny, Nfreq)
     interpolator = TemperatureInterpolator(df)
+    emissivity_cache = build_emissivity_frequency_cache(interpolator, nuArray)
 
     Threads.@threads for idx in CartesianIndices((1:nx, 1:ny))
         i, j = idx[1], idx[2]
-        @views T_nu[i, j, :] = Tnu(Bperpcube[i, j, :], nuArray, df, PixelLength_cm; precomputed_interp = interpolator)
+        @views Bperp_vec = Bperpcube[i, j, :]
+        @views tdest = T_nu[i, j, :]
+        _Tnu!(tdest, Bperp_vec, nuArray, PixelLength_cm, interpolator; emissivity_cache=emissivity_cache)
     end
 
     return T_nu

@@ -94,20 +94,30 @@ function normalize_yes_no_flag(value, field_name)
         return "N"
     end
 
-    error("`$(field_name)` must be one of Y/N (or true/false). Got: $(value)")
+    throw_config_error("`$(field_name)` must be one of Y/N (or true/false). Got: $(value)"; code=:invalid_flag)
+end
+
+function parse_config_float(value, field_name)
+    numeric_value = try
+        value isa AbstractString ? tryparse(Float64, strip(value)) : Float64(value)
+    catch
+        nothing
+    end
+    numeric_value === nothing && throw_config_error("`$(field_name)` must be numeric. Got: $(value)"; code=:invalid_numeric)
+    return numeric_value
 end
 
 function validate_positive_finite(value, field_name)
-    numeric_value = Float64(value)
-    isfinite(numeric_value) || error("`$(field_name)` must be finite. Got: $(value)")
-    numeric_value > 0 || error("`$(field_name)` must be > 0. Got: $(value)")
+    numeric_value = parse_config_float(value, field_name)
+    isfinite(numeric_value) || throw_config_error("`$(field_name)` must be finite. Got: $(value)"; code=:invalid_numeric)
+    numeric_value > 0 || throw_config_error("`$(field_name)` must be > 0. Got: $(value)"; code=:invalid_numeric)
     return numeric_value
 end
 
 function validate_nonnegative_finite(value, field_name)
-    numeric_value = Float64(value)
-    isfinite(numeric_value) || error("`$(field_name)` must be finite. Got: $(value)")
-    numeric_value >= 0 || error("`$(field_name)` must be >= 0. Got: $(value)")
+    numeric_value = parse_config_float(value, field_name)
+    isfinite(numeric_value) || throw_config_error("`$(field_name)` must be finite. Got: $(value)"; code=:invalid_numeric)
+    numeric_value >= 0 || throw_config_error("`$(field_name)` must be >= 0. Got: $(value)"; code=:invalid_numeric)
     return numeric_value
 end
 
@@ -123,36 +133,45 @@ function build_frequency_array(cfg)
         step_val = get(cfg, "dnu", 0.098)
     end
 
-    step_val <= 0 && throw_config_error("Frequency step must be positive (received $(step_val))."; code=:invalid_frequency)
-    end_val <= start_val && throw_config_error(
+    start_numeric = parse_config_float(start_val, "freq.start")
+    end_numeric = parse_config_float(end_val, "freq.end")
+    step_numeric = parse_config_float(step_val, "freq.step")
+
+    step_numeric <= 0 && throw_config_error("Frequency step must be positive (received $(step_val))."; code=:invalid_frequency)
+    end_numeric <= start_numeric && throw_config_error(
         "The end frequency ($(end_val)) must be greater than the start frequency ($(start_val)).";
         code=:invalid_frequency,
     )
 
-    return Float64(start_val), Float64(end_val), Float64(step_val)
+    return start_numeric, end_numeric, step_numeric
 end
 
 function build_faraday(cfg)
     faraday_cfg = get(cfg, "faraday", nothing)
     if faraday_cfg isa AbstractDict
-        enabled = get(faraday_cfg, "enabled", false)
+        enabled = normalize_yes_no_flag(get(faraday_cfg, "enabled", false), "faraday.enabled")
         phimin = get(faraday_cfg, "phimin", -20.0)
         phimax = get(faraday_cfg, "phimax", 20.0)
         dphi = get(faraday_cfg, "dphi", 0.1)
-        return enabled ? "Y" : "N", Float64(phimin), Float64(phimax), Float64(dphi)
     else
-        rotation_flag = uppercase(get(cfg, "FaradayRotation", "N"))
+        enabled = normalize_yes_no_flag(get(cfg, "FaradayRotation", "N"), "FaradayRotation")
         phimin = get(cfg, "phimin", -20.0)
         phimax = get(cfg, "phimax", 20.0)
         dphi = get(cfg, "dphi", 0.1)
-        return rotation_flag, Float64(phimin), Float64(phimax), Float64(dphi)
     end
 
+    phimin = parse_config_float(phimin, "phimin")
+    phimax = parse_config_float(phimax, "phimax")
+    dphi = parse_config_float(dphi, "dphi")
+    isfinite(phimin) || throw_config_error("`phimin` must be finite. Got: $(phimin)"; code=:invalid_faraday_range)
+    isfinite(phimax) || throw_config_error("`phimax` must be finite. Got: $(phimax)"; code=:invalid_faraday_range)
+    isfinite(dphi) || throw_config_error("`dphi` must be finite. Got: $(dphi)"; code=:invalid_faraday_range)
     dphi <= 0 && throw_config_error("The Faraday step dphi must be positive (received $(dphi))."; code=:invalid_faraday_range)
     phimax <= phimin && throw_config_error(
         "Faraday rotation range is invalid: phimax ($(phimax)) must be greater than phimin ($(phimin)).";
         code=:invalid_faraday_range,
     )
+    return enabled, phimin, phimax, dphi
 end
 
 function normalize_box_lengths(box_length)
@@ -223,9 +242,9 @@ function build_config(cfg, config_path)
     simu_paths = simu_paths_result.value
 
     chosen_LOS = map(x -> lowercase(String(x)), collect_los(cfg))
-    isempty(chosen_LOS) && error("`chosen_LOS` must contain at least one value among x, y, z.")
+    isempty(chosen_LOS) && throw_config_error("`chosen_LOS` must contain at least one value among x, y, z."; code=:invalid_los)
     invalid_los = [los for los in chosen_LOS if !(los in ("x", "y", "z"))]
-    isempty(invalid_los) || error("`chosen_LOS` contains invalid values: $(join(invalid_los, ", ")). Allowed values: x, y, z.")
+    isempty(invalid_los) || throw_config_error("`chosen_LOS` contains invalid values: $(join(invalid_los, ", ")). Allowed values: x, y, z."; code=:invalid_los)
 
     conversionB = validate_positive_finite(get(cfg, "conversionB", 1.0), "conversionB")
     conversionn = validate_positive_finite(get(cfg, "conversionn", 1.0), "conversionn")
@@ -258,27 +277,26 @@ function build_config(cfg, config_path)
     nustart = validate_positive_finite(nustart, "nustart")
     nuend = validate_positive_finite(nuend, "nuend")
     dnu = validate_positive_finite(dnu, "dnu")
-    nuend > nustart || error("`nuend` must be strictly greater than `nustart`.")
+    nuend > nustart || throw_config_error("`nuend` must be strictly greater than `nustart`."; code=:invalid_frequency)
 
     FaradayRotation, phimin, phimax, dphi = build_faraday(cfg)
     FaradayRotation = normalize_yes_no_flag(FaradayRotation, "FaradayRotation")
     dphi = validate_positive_finite(dphi, "dphi")
-    phimax > phimin || error("`phimax` must be strictly greater than `phimin`.")
+    phimax > phimin || throw_config_error("`phimax` must be strictly greater than `phimin`."; code=:invalid_faraday_range)
 
-    ne_option in ("1", "2", "3") || error("`ne_option` must be one of \"1\", \"2\", or \"3\".")
+    ne_option in ("1", "2", "3") || throw_config_error("`ne_option` must be one of \"1\", \"2\", or \"3\"."; code=:invalid_ne_option)
     if ne_option == "2"
         IonizationFraction = validate_nonnegative_finite(IonizationFraction, "IonizationFraction")
-        IonizationFraction <= 1.0 || error("`IonizationFraction` must be <= 1.0.")
+        IonizationFraction <= 1.0 || throw_config_error("`IonizationFraction` must be <= 1.0."; code=:invalid_ne_option)
     end
 
     if responseSynchrotron == "Y"
-        kernel_size_synchrotron === nothing && error("`kernel_size_synchrotron` is required when `responseSynchrotron` is enabled.")
-        kernel_size_synchrotron = Float64(kernel_size_synchrotron)
-        kernel_size_synchrotron > 0 || error("`kernel_size_synchrotron` must be > 0.")
+        kernel_size_synchrotron === nothing && throw_config_error("`kernel_size_synchrotron` is required when `responseSynchrotron` is enabled."; code=:missing_filter_kernel)
+        kernel_size_synchrotron = validate_positive_finite(kernel_size_synchrotron, "kernel_size_synchrotron")
     end
 
     if add_noise == "Y"
-        SNR_nu === nothing && error("`SNR_nu` is required when `add_noise` is enabled.")
+        SNR_nu === nothing && throw_config_error("`SNR_nu` is required when `add_noise` is enabled."; code=:missing_noise_snr)
         SNR_nu = validate_positive_finite(SNR_nu, "SNR_nu")
     elseif SNR_nu !== nothing
         SNR_nu = validate_positive_finite(SNR_nu, "SNR_nu")
@@ -336,14 +354,45 @@ function collect_wolfire_constants(cfg)
         throw_config_error("Wolfire constants must include zeta, Geff, phiPAH, and XC when provided."; code=:invalid_wolfire_constants)
     end
 
-    return (Float64(zeta), Float64(Geff), Float64(phiPAH), Float64(XC))
+    return (
+        parse_config_float(zeta, "zeta"),
+        parse_config_float(Geff, "Geff"),
+        parse_config_float(phiPAH, "phiPAH"),
+        parse_config_float(XC, "XC"),
+    )
+end
+
+function MOOSE_from_config_dict(
+    cfg::AbstractDict;
+    config_path::AbstractString = "<in-memory>",
+    quiet::Bool = false,
+    source_config_path = config_path,
+    saved_config_path = config_path,
+    write_config_file::Bool = true,
+)
+    run_config, _ = build_config(cfg, config_path)
+    run_moose_processing(
+        run_config;
+        quiet = quiet,
+        persisted_config = cfg,
+        source_config_path = source_config_path,
+        saved_config_path = saved_config_path,
+        write_config_file = write_config_file,
+    )
+
+    return nothing
 end
 
 function MOOSE_from_config(config_path::AbstractString; quiet::Bool = false)
     cfg = JSON.parsefile(config_path)
-
-    run_config, _ = build_config(cfg, config_path)
-    run_moose_processing(run_config; quiet = quiet, persisted_config = cfg)
+    MOOSE_from_config_dict(
+        cfg;
+        config_path = config_path,
+        quiet = quiet,
+        source_config_path = config_path,
+        saved_config_path = config_path,
+        write_config_file = true,
+    )
 
     return nothing
 end

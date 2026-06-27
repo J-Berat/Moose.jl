@@ -1,5 +1,6 @@
 using JSON
 using MOOSE: MooseError, cli_error, throw_cli_error
+using MOOSE.MOOSEFromConfig: MOOSE_from_config_dict
 
 function parse_numeric(name, value)
     parsed = tryparse(Float64, value)
@@ -8,9 +9,16 @@ function parse_numeric(name, value)
 end
 
 function parse_flag(name, value; allowed=("Y", "N"))
-    normalized = uppercase(value)
-    normalized in allowed || throw_cli_error("$(name) expects $(join(allowed, " or ")), got '$(value)'.")
-    return normalized
+    normalized = uppercase(strip(String(value)))
+    if normalized in ("Y", "YES", "TRUE", "1")
+        flag = "Y"
+    elseif normalized in ("N", "NO", "FALSE", "0")
+        flag = "N"
+    else
+        throw_cli_error("$(name) expects $(join(allowed, " or ")), got '$(value)'.")
+    end
+    flag in allowed || throw_cli_error("$(name) expects $(join(allowed, " or ")), got '$(value)'.")
+    return flag
 end
 
 function parse_ne_option(value)
@@ -153,7 +161,7 @@ function parse_cli_args(args)
     isempty(los_values) || (overrides["chosen_LOS"] = los_values)
     interpolation_file === nothing || (overrides["interpolation_file_path"] = interpolation_file)
 
-    write_back && config_path === nothing && error("--write-back requires a config path (positional or via --config).")
+    write_back && config_path === nothing && throw_cli_error("--write-back requires a config path (positional or via --config).")
 
     return config_path, quiet, write_back, overrides
 end
@@ -169,22 +177,26 @@ end
 function run_with_config(config_path, quiet, write_back, overrides)
     cfg = merge(load_base_config(config_path), overrides)
 
-    if config_path === nothing || !write_back
-        mktemp(; cleanup = false) do path, io
-            try
-                write(io, JSON.json(cfg))
-                close(io)
-                MOOSE.MOOSE_from_config(path; quiet = quiet)
-            finally
-                isopen(io) && close(io)
-                rm(path; force = true)
-            end
-        end
+    if write_back
+        MOOSE.save_config(cfg, config_path)
+        MOOSE_from_config_dict(
+            cfg;
+            config_path = config_path,
+            quiet = quiet,
+            source_config_path = config_path,
+            saved_config_path = config_path,
+            write_config_file = true,
+        )
     else
-        open(config_path, "w") do io
-            write(io, JSON.json(cfg))
-        end
-        MOOSE.MOOSE_from_config(config_path; quiet = quiet)
+        effective_path = config_path === nothing ? "<cli-overrides>" : "$(config_path) + CLI overrides"
+        MOOSE_from_config_dict(
+            cfg;
+            config_path = effective_path,
+            quiet = quiet,
+            source_config_path = config_path,
+            saved_config_path = nothing,
+            write_config_file = false,
+        )
     end
 end
 

@@ -32,15 +32,41 @@ Qnu, Unu = QUnu(Bperp, psi_src, RM, nuArray, df, PixelLength_cm)
 
 """
 
+"""
+    emissivity_grid(df, values) -> (B, nu, eps)
+
+Reorder a flat emissivity table into the matrix layout expected by
+`Spline2D(x, y, z)`, i.e. `eps[i, j] = f(B[i], nu[j])` with `B` and `nu`
+sorted in increasing order. The table must contain exactly one row per
+(B, ν) pair of the full cartesian product — any missing, duplicated or
+extra row raises an explicit error instead of silently permuting
+emissivities.
+"""
+function emissivity_grid(df::DataFrame, values::AbstractVector)
+    B = sort(unique(df.B))
+    nu = sort(unique(df.nu))
+
+    nrow(df) == length(B) * length(nu) || error(
+        "Emissivity table is not a complete (B, nu) grid: $(nrow(df)) rows ≠ " *
+        "$(length(B)) B values × $(length(nu)) nu values.")
+    allunique(zip(df.B, df.nu)) || error(
+        "Emissivity table contains duplicated (B, nu) pairs.")
+
+    # Sort rows with nu as the outer (slow) key and B as the inner (fast) key,
+    # so the reshape below fills the (B, nu) matrix in column-major order.
+    perm = sortperm(collect(zip(df.nu, df.B)))
+    eps = reshape(Float64.(values[perm]), (length(B), length(nu)))
+
+    return Float64.(B), Float64.(nu), eps
+end
+
 struct EmissivityInterpolator
     B::Vector{Float64}
     eps_interp::Spline2D
 end
 
 function EmissivityInterpolator(df::DataFrame)
-    B = collect(unique(df.B))
-    nu = collect(unique(df.nu))
-    eps = reshape(df.e_perp .- df.e_para, (length(nu), length(B)))
+    B, nu, eps = emissivity_grid(df, df.e_perp .- df.e_para)
     eps_interp = Spline2D(B, nu, eps)
     return EmissivityInterpolator(B, eps_interp)
 end
