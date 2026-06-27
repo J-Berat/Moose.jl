@@ -647,13 +647,13 @@ function run_moose_interactive(; quiet::Bool = false, reset_config::Bool = true)
         candidate_dir = ask_user("Enter the base directory for simulations", get(config, "base_dir", pwd()))
         validation_error = ensure_directory_access(candidate_dir)
         if validation_error !== nothing
-            println(validation_error)
+            warn_user(validation_error)
             continue
         end
 
         candidate_list = get_simulation_list(candidate_dir)
         if isempty(candidate_list)
-            println("[Warning] No simulations containing FITS files were found in $(candidate_dir). Please enter another path.")
+            warn_user("No simulations containing FITS files were found in $(candidate_dir). Please enter another path.")
             continue
         end
 
@@ -665,7 +665,7 @@ function run_moose_interactive(; quiet::Bool = false, reset_config::Bool = true)
 
     display_simulations(simu_list)
 
-    simu_prompt = "Enter 'all' to process all simulations or provide comma-separated indices (e.g., 1,3,5):"
+    simu_prompt = "Enter 'all' to process all simulations or provide comma-separated indices (e.g., 1,3,5)"
     simu_choice = ask_user(simu_prompt, get(config, "simu_choice", "all"))
     chosen_simu = begin
         parsed_indices = Int[]
@@ -683,9 +683,9 @@ function run_moose_interactive(; quiet::Bool = false, reset_config::Bool = true)
                 isempty(candidate) && continue
                 parsed = tryparse(Int, candidate)
                 if parsed === nothing
-                    println("[Warning] Ignoring invalid simulation index: $(candidate). Enter comma-separated integers like 1,3,5.")
+                    warn_user("Ignoring invalid simulation index: $(candidate). Enter comma-separated integers like 1,3,5.")
                 elseif parsed < 1 || parsed > length(simu_list)
-                    println("[Warning] Simulation index $(parsed) is out of range (1-$(length(simu_list))).")
+                    warn_user("Simulation index $(parsed) is out of range (1-$(length(simu_list))).")
                 else
                     push!(parsed_indices, parsed)
                 end
@@ -695,7 +695,7 @@ function run_moose_interactive(; quiet::Bool = false, reset_config::Bool = true)
                 break
             end
 
-            println("[Error] No valid simulation indices provided. Use 'all' or comma-separated integers like 1,3,5 and try again.")
+            error_user("No valid simulation indices provided. Use 'all' or comma-separated integers like 1,3,5 and try again.")
             simu_choice = ask_user(simu_prompt, simu_choice)
         end
 
@@ -705,9 +705,9 @@ function run_moose_interactive(; quiet::Bool = false, reset_config::Bool = true)
     end
     config["chosen_simu"] = chosen_simu
 
-    conversionB = ask_user("Enter the conversion factor for magnetic field B to μG (microGauss):", Float64(get(config, "conversionB", 1.0)))
-    conversionn = ask_user("Enter the conversion factor for number density n to cm^-3:", Float64(get(config, "conversionn", 1.0)))
-    conversionT = ask_user("Enter the conversion factor for temperature T to K:", Float64(get(config, "conversionT", 1.0)))
+    conversionB = ask_user("Enter the conversion factor for magnetic field B to μG (microGauss)", Float64(get(config, "conversionB", 1.0)))
+    conversionn = ask_user("Enter the conversion factor for number density n to cm^-3", Float64(get(config, "conversionn", 1.0)))
+    conversionT = ask_user("Enter the conversion factor for temperature T to K", Float64(get(config, "conversionT", 1.0)))
     config["conversionB"] = conversionB
     config["conversionn"] = conversionn
     config["conversionT"] = conversionT
@@ -724,7 +724,8 @@ function run_moose_interactive(; quiet::Bool = false, reset_config::Bool = true)
     config["nuend"] = nuend
     config["dnu"] = dnu
 
-    FaradayRotation = ask_user("Do you want to include Faraday rotation in the computation of Q and U? (Y/N)", get(config,"FaradayRotation", "N"))
+    FaradayRotation = ask_user("Do you want to include Faraday rotation in the computation of Q and U? (Y/N)", get(config,"FaradayRotation", "N");
+        validate = is_yes_no, error_message = "Please answer Y or N.")
     faraday_flag = uppercase(FaradayRotation)
     config["FaradayRotation"] = FaradayRotation
     phimin = get(config, "phimin", -10.0)
@@ -739,21 +740,23 @@ function run_moose_interactive(; quiet::Bool = false, reset_config::Bool = true)
     config["phimax"] = phimax
     config["dphi"] = dphi
 
-    responseSynchrotron = ask_user("Do you want to perform interferometric Fourier filtering for Synchrotron data? (Y/N)", get(config, "responseSynchrotron", "N"))
+    responseSynchrotron = ask_user("Do you want to perform interferometric Fourier filtering for Synchrotron data? (Y/N)", get(config, "responseSynchrotron", "N");
+        validate = is_yes_no, error_message = "Please answer Y or N.")
     kernel_size_synchrotron = uppercase(responseSynchrotron) == "Y" ? ask_user("Largest Fourier scale to keep for Synchrotron filtering (in pixels, e.g. 154)", get(config, "kernel_size_synchrotron", 154.0)) : nothing
     config["responseSynchrotron"] = responseSynchrotron
     config["kernel_size_synchrotron"] = kernel_size_synchrotron
 
-    add_noise = ask_user("Do you want to add noise to Q and U? (Y/N)", get(config, "add_noise", "N"))
+    add_noise = ask_user("Do you want to add noise to Q and U? (Y/N)", get(config, "add_noise", "N");
+        validate = is_yes_no, error_message = "Please answer Y or N.")
     config["add_noise"] = add_noise
 
-    SNR_nu = uppercase(add_noise) == "Y" ? ask_user("Enter the desired SNR in the frequency space:", get(config, "SNR_nu", 0.9)) : nothing
+    SNR_nu = uppercase(add_noise) == "Y" ? ask_user("Enter the desired SNR in the frequency space", get(config, "SNR_nu", 0.9)) : nothing
     config["SNR_nu"] = SNR_nu
 
     rng_seed = get(config, "rng_seed", nothing)
     if uppercase(add_noise) == "Y"
         default_seed = rng_seed === nothing ? 0 : Int(rng_seed)
-        raw_seed = ask_user("Random seed for reproducible noise (integer; 0 for a random seed):", default_seed)
+        raw_seed = ask_user("Random seed for reproducible noise (integer; 0 for a random seed)", default_seed)
         rng_seed = Int(raw_seed) == 0 ? nothing : Int(raw_seed)
     end
     config["rng_seed"] = rng_seed
@@ -774,7 +777,7 @@ function run_moose_interactive(; quiet::Bool = false, reset_config::Bool = true)
             if candidate in list_LOS
                 push!(valid_los, candidate)
             else
-                println("[Warning] Ignoring invalid line of sight: $(candidate). Valid options are x, y, z.")
+                warn_user("Ignoring invalid line of sight: $(candidate). Valid options are x, y, z.")
             end
         end
 
@@ -805,7 +808,7 @@ function run_moose_interactive(; quiet::Bool = false, reset_config::Bool = true)
         if validation_error === nothing
             break
         else
-            println(validation_error)
+            warn_user(validation_error)
         end
     end
     config["interpolation_file_path"] = interpolation_file_path
@@ -814,7 +817,7 @@ function run_moose_interactive(; quiet::Bool = false, reset_config::Bool = true)
     while true
         ne_option = ask_user("Choose electron density prescription: (1) Wolfire et al. 2003, (2) Proportional to nH, (3) Provide ne cube", get(config, "ne_option", "1"))
         ne_option in ("1", "2", "3") && break
-        println("[Warning] Please choose 1, 2, or 3 for the electron density prescription.")
+        warn_user("Please choose 1, 2, or 3 for the electron density prescription.")
     end
     config["ne_option"] = ne_option
 
@@ -833,7 +836,7 @@ function run_moose_interactive(; quiet::Bool = false, reset_config::Bool = true)
         end
     end
     if ne_option == "2"
-        IonizationFraction = ask_user("Enter the ionization fraction for the alternative prescription:", get(config, "IonizationFraction", 0.01))
+        IonizationFraction = ask_user("Enter the ionization fraction for the alternative prescription", get(config, "IonizationFraction", 0.01))
         config["IonizationFraction"] = IonizationFraction
     elseif ne_option == "3"
         missing_cubes = [simu for simu in chosen_simu if !isfile(joinpath(simu, "densityHp.fits"))]

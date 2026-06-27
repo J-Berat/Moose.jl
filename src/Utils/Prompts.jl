@@ -18,10 +18,20 @@ function _print_prompt(prompt::AbstractString, default)
     flush(stdout)
 end
 
-function _warn(msg::AbstractString)
+# Styled, homogeneous feedback used across the interactive workflows.
+function warn_user(msg::AbstractString)
     printstyled("    ↳ ", msg, "\n"; color = :yellow)
     flush(stdout)
 end
+
+function error_user(msg::AbstractString)
+    printstyled("    ↳ ", msg, "\n"; color = :light_red, bold = true)
+    flush(stdout)
+end
+
+# Predicate for yes/no prompts: accepts only Y or N (case-insensitive),
+# matching the downstream `uppercase(answer) == "Y"` checks.
+is_yes_no(answer) = uppercase(strip(String(answer))) in ("Y", "N")
 
 # --- public API ------------------------------------------------------------
 
@@ -32,7 +42,7 @@ function ask_user(prompt::String, default::Float64)
         isempty(val) && return default
 
         parsed = tryparse(Float64, val)
-        parsed === nothing && _warn("Please enter a numeric value (e.g., 1.0) or press Enter to use the default.")
+        parsed === nothing && warn_user("Please enter a numeric value (e.g., 1.0) or press Enter to use the default.")
         parsed !== nothing && return parsed
     end
 end
@@ -44,7 +54,7 @@ function ask_user(prompt::String, default::Int64)
         isempty(val) && return default
 
         parsed = tryparse(Int, val)
-        parsed === nothing && _warn("Please enter an integer value (e.g., 1 or 3) or press Enter to use the default.")
+        parsed === nothing && warn_user("Please enter an integer value (e.g., 1 or 3) or press Enter to use the default.")
         parsed !== nothing && return parsed
     end
 end
@@ -60,6 +70,6 @@ function ask_user(
         response = String(strip(readline()))
         isempty(response) && (response = String(default))
         validate(response) && return response
-        !isempty(error_message) && _warn(error_message)
+        !isempty(error_message) && warn_user(error_message)
     end
 end
