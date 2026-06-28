@@ -174,6 +174,39 @@ function build_faraday(cfg)
     return enabled, phimin, phimax, dphi
 end
 
+function validate_nonnegative_int(value, field_name)
+    int_value = try
+        value isa AbstractString ? tryparse(Int, strip(value)) : Int(value)
+    catch
+        nothing
+    end
+    int_value === nothing && throw_config_error("`$(field_name)` must be an integer. Got: $(value)"; code=:invalid_numeric)
+    int_value >= 0 || throw_config_error("`$(field_name)` must be >= 0. Got: $(value)"; code=:invalid_numeric)
+    return int_value
+end
+
+function build_rm_clean(cfg)
+    clean_cfg = get(cfg, "rm_clean", nothing)
+    if clean_cfg isa AbstractDict
+        enabled = normalize_yes_no_flag(get(clean_cfg, "enabled", false), "rm_clean.enabled")
+        gain = get(clean_cfg, "gain", 0.1)
+        niter = get(clean_cfg, "niter", 1000)
+        threshold = get(clean_cfg, "threshold", 0.0)
+    else
+        enabled = normalize_yes_no_flag(get(cfg, "do_rm_clean", get(cfg, "RMClean", false)), "do_rm_clean")
+        gain = get(cfg, "rm_clean_gain", 0.1)
+        niter = get(cfg, "rm_clean_niter", 1000)
+        threshold = get(cfg, "rm_clean_threshold", 0.0)
+    end
+
+    gain = validate_positive_finite(gain, "rm_clean.gain")
+    gain <= 1.0 || throw_config_error("`rm_clean.gain` must be <= 1.0. Got: $(gain)"; code=:invalid_numeric)
+    niter = validate_nonnegative_int(niter, "rm_clean.niter")
+    threshold = validate_nonnegative_finite(threshold, "rm_clean.threshold")
+
+    return enabled == "Y", gain, niter, threshold
+end
+
 function normalize_box_lengths(box_length)
     if box_length isa AbstractVector
         length(box_length) == 3 || throw_config_error("Box length array must have three elements (x, y, z).")
@@ -283,6 +316,10 @@ function build_config(cfg, config_path)
     FaradayRotation = normalize_yes_no_flag(FaradayRotation, "FaradayRotation")
     dphi = validate_positive_finite(dphi, "dphi")
     phimax > phimin || throw_config_error("`phimax` must be strictly greater than `phimin`."; code=:invalid_faraday_range)
+    rm_clean_enabled, rm_clean_gain, rm_clean_niter, rm_clean_threshold = build_rm_clean(cfg)
+    if rm_clean_enabled && FaradayRotation != "Y"
+        throw_config_error("`rm_clean.enabled` requires Faraday rotation to be enabled."; code=:invalid_rm_clean)
+    end
 
     ne_option in ("1", "2", "3") || throw_config_error("`ne_option` must be one of \"1\", \"2\", or \"3\"."; code=:invalid_ne_option)
     if ne_option == "2"
@@ -333,7 +370,11 @@ function build_config(cfg, config_path)
         BoxLength_pix,
         config_path,
         log_progress,
-        rng_seed,
+        rng_seed;
+        rm_clean_enabled = rm_clean_enabled,
+        rm_clean_gain = rm_clean_gain,
+        rm_clean_niter = rm_clean_niter,
+        rm_clean_threshold = rm_clean_threshold,
     ), simu_paths
 end
 

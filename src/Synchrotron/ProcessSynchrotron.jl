@@ -50,6 +50,112 @@ function _write_integrated_quantities(resultspath, B1, B2, BLOS, T, ne, Bperpcub
     return nothing
 end
 
+function _healpix_unit(DataName::String)
+    return haskey(DictHeader, DataName) ? String(DictHeader[DataName]["bunit"]) : ""
+end
+
+function _healpix_extname(DataName::String)
+    return uppercase(replace(DataName, "_" => ""))
+end
+
+function _healpix_map_vector(data)
+    if data isa AbstractVector
+        return collect(data)
+    elseif ndims(data) == 2 && size(data, 2) == 1
+        return collect(view(data, :, 1))
+    end
+
+    error("Expected a HEALPix map vector or Npix x 1 array, got size $(size(data)).")
+end
+
+function _healpix_stack_matrix(data)
+    ndims(data) == 3 && size(data, 2) == 1 ||
+        error("Expected a HEALPix stack encoded as Npix x 1 x Nslice, got size $(size(data)).")
+    return reshape(data, size(data, 1), size(data, 3))
+end
+
+function _write_healpix_map_quantity(resultspath, data, DataName::String, hp_meta)
+    path = joinpath(resultspath, "$(DataName).fits")
+    write_healpix_map(path, _healpix_map_vector(data);
+        nside = hp_meta.nside,
+        order = hp_meta.order,
+        unit = _healpix_unit(DataName),
+        extname = _healpix_extname(DataName),
+    )
+    return path
+end
+
+function _write_healpix_stack_quantity(resultspath, data, DataName::String, coordinates, hp_meta; basename::Union{Nothing,String}=nothing)
+    matrix = _healpix_stack_matrix(data)
+    if size(matrix, 2) == 1
+        return [_write_healpix_map_quantity(resultspath, view(matrix, :, 1), DataName, hp_meta)]
+    end
+
+    return write_healpix_stack(resultspath, matrix, basename === nothing ? DataName : basename, collect(coordinates);
+        nside = hp_meta.nside,
+        order = hp_meta.order,
+        unit = _healpix_unit(DataName),
+        extname = _healpix_extname(DataName),
+    )
+end
+
+function _write_healpix_rmclean_result(resultspath, result, hp_meta)
+    write_healpix_stack(resultspath, Matrix(result.cleanFDF), "cleanFDF", result.phi;
+        nside = hp_meta.nside,
+        order = hp_meta.order,
+        unit = _healpix_unit("cleanFDF"),
+        extname = _healpix_extname("cleanFDF"),
+    )
+    write_healpix_stack(resultspath, Matrix(result.realCleanFDF), "realCleanFDF", result.phi;
+        nside = hp_meta.nside,
+        order = hp_meta.order,
+        unit = _healpix_unit("realCleanFDF"),
+        extname = _healpix_extname("realCleanFDF"),
+    )
+    write_healpix_stack(resultspath, Matrix(result.imagCleanFDF), "imagCleanFDF", result.phi;
+        nside = hp_meta.nside,
+        order = hp_meta.order,
+        unit = _healpix_unit("imagCleanFDF"),
+        extname = _healpix_extname("imagCleanFDF"),
+    )
+    write_healpix_stack(resultspath, Matrix(abs.(result.residual)), "residualFDF", result.phi;
+        nside = hp_meta.nside,
+        order = hp_meta.order,
+        unit = _healpix_unit("residualFDF"),
+        extname = _healpix_extname("residualFDF"),
+    )
+
+    return nothing
+end
+
+function _write_rmclean_cartesian(resultspath, result; metadata=nothing)
+    WriteData3D(resultspath, result.cleanFDF, "cleanFDF", result.phi; ensure_path=false, metadata=metadata)
+    WriteData3D(resultspath, result.realCleanFDF, "realCleanFDF", result.phi; ensure_path=false, metadata=metadata)
+    WriteData3D(resultspath, result.imagCleanFDF, "imagCleanFDF", result.phi; ensure_path=false, metadata=metadata)
+    WriteData3D(resultspath, abs.(result.residual), "residualFDF", result.phi; ensure_path=false, metadata=metadata)
+    return nothing
+end
+
+function _write_integrated_quantities_healpix(resultspath, B1, B2, BLOS, T, ne, Bperpcube, los_pixel_length_cm, hp_meta)
+    Btotal = Btot(B1, B2, BLOS)
+    quantities = (
+        "intBtotal" => intLOS(Btotal, los_pixel_length_cm),
+        "sigmaBtotal" => sigmaLOS(Btotal),
+        "intne" => intLOS(ne, los_pixel_length_cm),
+        "sigmane" => sigmaLOS(ne),
+        "sigmaT" => sigmaLOS(T),
+        "intBLOS" => intLOS(BLOS, los_pixel_length_cm),
+        "sigmaBLOS" => sigmaLOS(BLOS),
+        "intBperp" => intLOS(Bperpcube, los_pixel_length_cm),
+    )
+
+    for (name, data) in quantities
+        _write_healpix_map_quantity(resultspath, data, name, hp_meta)
+    end
+
+    return nothing
+end
+
 function _apply_synchrotron_filter!(Qnu, Unu, T_nu, Llarge_filter_pix)
     # The filter works entirely in PIXEL units (Δx = Δy = 1 pixel), matching
     # the documented convention: `kernel_size_synchrotron` is the largest
@@ -123,12 +229,19 @@ function _process_synchrotron_common(
     rng = Random.default_rng(),
     expected_shape = nothing,
     metadata = nothing,
+    rm_clean_enabled::Bool = false,
+    rm_clean_gain::Real = 0.1,
+    rm_clean_niter::Integer = 1000,
+    rm_clean_threshold::Real = 0.0,
 )
     resultspath = joinpath(simu, LOS, "Synchrotron")
     mkpath(resultspath)
     fits_metadata = metadata === nothing ? Dict{String, Any}() : copy(metadata)
     fits_metadata["LOS"] = String(LOS)
     fits_metadata["BLENPC"] = Float64(BoxLength_pc)
+    grid_kind = simulation_grid_kind(simu)
+    hp_meta = grid_kind == :healpix ? healpix_simulation_metadata(simu) : nothing
+    fits_metadata["GRID"] = grid_kind == :healpix ? "HEALPIX" : "IMAGE"
 
     SimuParameters = ReadSimulation(simu, LOS, conversionn, conversionT, conversionB)
     B1, B2, BLOS = SimuParameters[1], SimuParameters[2], SimuParameters[3]
@@ -154,10 +267,20 @@ function _process_synchrotron_common(
 
     _stage("Computing electron density")
     ne = electron_density_builder(T, n, nHp)
-    write_ne && WriteData3D(resultspath, ne, "ne", los_distance_array; ensure_path=false, metadata=fits_metadata)
+    if write_ne
+        if hp_meta === nothing
+            WriteData3D(resultspath, ne, "ne", los_distance_array; ensure_path=false, metadata=fits_metadata)
+        else
+            _write_healpix_stack_quantity(resultspath, ne, "ne", los_distance_array, hp_meta)
+        end
+    end
 
     _stage("Computing integrated quantities")
-    _write_integrated_quantities(resultspath, B1, B2, BLOS, T, ne, Bperpcube, los_pixel_length_cm; metadata=fits_metadata)
+    if hp_meta === nothing
+        _write_integrated_quantities(resultspath, B1, B2, BLOS, T, ne, Bperpcube, los_pixel_length_cm; metadata=fits_metadata)
+    else
+        _write_integrated_quantities_healpix(resultspath, B1, B2, BLOS, T, ne, Bperpcube, los_pixel_length_cm, hp_meta)
+    end
     B1 = nothing
     B2 = nothing
     T = nothing
@@ -171,7 +294,11 @@ function _process_synchrotron_common(
         dRM = deltaRM(BLOS, ne, los_pixel_length_pc)
         RMcube = RM(dRM)
         RMmap = RMcube[:, :, end]
-        WriteData2D(resultspath, RMmap, "RMmap"; ensure_path=false, metadata=fits_metadata)
+        if hp_meta === nothing
+            WriteData2D(resultspath, RMmap, "RMmap"; ensure_path=false, metadata=fits_metadata)
+        else
+            _write_healpix_map_quantity(resultspath, RMmap, "RMmap", hp_meta)
+        end
     else
         resultspath = joinpath(resultspath, "noFaraday")
         mkpath(resultspath)
@@ -190,6 +317,9 @@ function _process_synchrotron_common(
     Bperpcube = nothing
 
     if filtering_enabled
+        hp_meta === nothing ||
+            throw_config_error("HEALPix inputs do not support the current cartesian Fourier filtering (`responseSynchrotron=Y`). Disable filtering or add a spherical-harmonic HEALPix filter.";
+                code=:unsupported_grid_operation)
         _stage("Applying interferometric Fourier mask")
         _apply_synchrotron_filter!(Qnu, Unu, T_nu, kernel_size_synchrotron)
         resultspath = joinpath(resultspath, "filtered")
@@ -207,23 +337,88 @@ function _process_synchrotron_common(
     # so the spectral axis is converted to Hz once, here, at write time.
     nuArray_Hz = collect(Float64, nuArray) .* 1e6
 
-    WriteQUnu3D(resultspath, Qnu, Unu, nuArray_Hz; ensure_path=false, metadata=fits_metadata)
-    WriteData3D(resultspath, T_nu, "T_nu", nuArray_Hz; ensure_path=false, metadata=fits_metadata, filename="Tnu.fits")
+    if hp_meta === nothing
+        WriteQUnu3D(resultspath, Qnu, Unu, nuArray_Hz; ensure_path=false, metadata=fits_metadata)
+        WriteData3D(resultspath, T_nu, "T_nu", nuArray_Hz; ensure_path=false, metadata=fits_metadata, filename="Tnu.fits")
+    else
+        _write_healpix_stack_quantity(resultspath, Qnu, "Qnu", nuArray_Hz, hp_meta)
+        _write_healpix_stack_quantity(resultspath, Unu, "Unu", nuArray_Hz, hp_meta)
+        _write_healpix_stack_quantity(resultspath, T_nu, "T_nu", nuArray_Hz, hp_meta; basename="Tnu")
+    end
 
     _stage("Computing Pnu and Pnumax")
     Pnucube = Pnu(Qnu, Unu)
     Pnumax = maxCube(Pnucube)
-    WriteData3D(resultspath, Pnucube, "Pnu", nuArray_Hz; ensure_path=false, metadata=fits_metadata)
-    WriteData2D(resultspath, Pnumax, "Pnumax"; ensure_path=false, metadata=fits_metadata)
+    if hp_meta === nothing
+        WriteData3D(resultspath, Pnucube, "Pnu", nuArray_Hz; ensure_path=false, metadata=fits_metadata)
+        WriteData2D(resultspath, Pnumax, "Pnumax"; ensure_path=false, metadata=fits_metadata)
+    else
+        _write_healpix_stack_quantity(resultspath, Pnucube, "Pnu", nuArray_Hz, hp_meta)
+        _write_healpix_map_quantity(resultspath, Pnumax, "Pnumax", hp_meta)
+    end
+    try
+        write_polarization_diagnostic_plots(resultspath, Qnu, Unu, T_nu, nuArray_Hz; Pnumax = Pnumax)
+    catch err
+        @warn "Failed to write polarization diagnostic plots" path = resultspath exception = (err, catch_backtrace())
+    end
 
     if faraday_enabled
         _stage("Performing RM synthesis")
-        FDF, realFDF, imagFDF = RMSynthesis(Qnu, Unu, nuArray * 1e6, PhiArray; log_progress = log_progress)
-        Pmax = maxCube(FDF)
-        WriteData3D(resultspath, FDF, "FDF", PhiArray; ensure_path=false, metadata=fits_metadata)
-        WriteData3D(resultspath, realFDF, "realFDF", PhiArray; ensure_path=false, metadata=fits_metadata)
-        WriteData3D(resultspath, imagFDF, "imagFDF", PhiArray; ensure_path=false, metadata=fits_metadata)
-        WriteData2D(resultspath, Pmax, "Pmax"; ensure_path=false, metadata=fits_metadata)
+        rmsf = nothing
+        if hp_meta === nothing
+            FDF, realFDF, imagFDF = RMSynthesis(Qnu, Unu, nuArray * 1e6, PhiArray; log_progress = log_progress)
+            Pmax = maxCube(FDF)
+            WriteData3D(resultspath, FDF, "FDF", PhiArray; ensure_path=false, metadata=fits_metadata)
+            WriteData3D(resultspath, realFDF, "realFDF", PhiArray; ensure_path=false, metadata=fits_metadata)
+            WriteData3D(resultspath, imagFDF, "imagFDF", PhiArray; ensure_path=false, metadata=fits_metadata)
+            WriteData2D(resultspath, Pmax, "Pmax"; ensure_path=false, metadata=fits_metadata)
+        else
+            q_stack = HealpixStack(_healpix_stack_matrix(Qnu); nside=hp_meta.nside, order=hp_meta.order)
+            u_stack = HealpixStack(_healpix_stack_matrix(Unu); nside=hp_meta.nside, order=hp_meta.order)
+            hp_result = RMSynthesisHealpix(q_stack, u_stack, nuArray * 1e6, PhiArray; log_progress = log_progress)
+            write_healpix_rm_result(resultspath, hp_result; overwrite=true)
+            Pmax = maximum(hp_result.fdf, dims=2)
+            _write_healpix_map_quantity(resultspath, Pmax, "Pmax", hp_meta)
+        end
+
+        # RMSF diagnostics: write the spread function and its resolution metrics
+        # alongside the FDF products. If RM-CLEAN is requested, diagnostics are
+        # required and failures should abort the run; otherwise they only warn.
+        if rm_clean_enabled
+            rmsf = rmsf_diagnostics(nuArray * 1e6, PhiArray)
+            @info "RMSF diagnostics" fwhm = rmsf.fwhm delta_phi_theory = rmsf.fwhm_theoretical phi_max = rmsf.phi_max max_scale = rmsf.max_scale
+            write_rmsf(resultspath, rmsf; ensure_path=false, metadata=fits_metadata)
+        else
+            try
+                rmsf = rmsf_diagnostics(nuArray * 1e6, PhiArray)
+                @info "RMSF diagnostics" fwhm = rmsf.fwhm delta_phi_theory = rmsf.fwhm_theoretical phi_max = rmsf.phi_max max_scale = rmsf.max_scale
+                write_rmsf(resultspath, rmsf; ensure_path=false, metadata=fits_metadata)
+            catch err
+                @warn "Failed to compute or write RMSF diagnostics" exception = err
+            end
+        end
+
+        if rm_clean_enabled
+            _stage("Performing RM-CLEAN")
+            if hp_meta === nothing
+                clean_result = rmclean(realFDF, imagFDF, PhiArray, rmsf;
+                    gain = rm_clean_gain,
+                    threshold = rm_clean_threshold,
+                    niter = rm_clean_niter,
+                    log_progress = log_progress,
+                )
+                _write_rmclean_cartesian(resultspath, clean_result; metadata=fits_metadata)
+            else
+                clean_result = RMClean(q_stack.pixels, u_stack.pixels, nuArray * 1e6, PhiArray;
+                    gain = rm_clean_gain,
+                    threshold = rm_clean_threshold,
+                    niter = rm_clean_niter,
+                    diagnostics = rmsf,
+                    log_progress = log_progress,
+                )
+                _write_healpix_rmclean_result(resultspath, clean_result, hp_meta)
+            end
+        end
     else
         @info "No Faraday tomography performed"
     end
@@ -235,7 +430,8 @@ function ProcessSynchrotron(simu::AbstractString, LOS, FaradayRotation::Abstract
                        df::DataFrame, add_noise, SNR_nu, kernel_size_synchrotron, zeta::Float64, Geff::Float64,
                        omegaPAH::Float64, XC::Float64, nuArray::AbstractArray, PhiArray,
                        PixelLength_pc, PixelLength_cm, BoxLength_pc,
-                       DistanceArray, conversionn, conversionT, conversionB; log_progress::Bool = false, rng = Random.default_rng(), expected_shape = nothing, metadata = nothing)
+                       DistanceArray, conversionn, conversionT, conversionB; log_progress::Bool = false, rng = Random.default_rng(), expected_shape = nothing, metadata = nothing,
+                       rm_clean_enabled::Bool = false, rm_clean_gain::Real = 0.1, rm_clean_niter::Integer = 1000, rm_clean_threshold::Real = 0.0)
     return _process_synchrotron_common(
         simu,
         LOS,
@@ -257,13 +453,18 @@ function ProcessSynchrotron(simu::AbstractString, LOS, FaradayRotation::Abstract
         rng = rng,
         expected_shape = expected_shape,
         metadata = metadata,
+        rm_clean_enabled = rm_clean_enabled,
+        rm_clean_gain = rm_clean_gain,
+        rm_clean_niter = rm_clean_niter,
+        rm_clean_threshold = rm_clean_threshold,
     )
 end
 
 function ProcessSynchrotron(simu::String, LOS, FaradayRotation::String, responseSynchrotron::String,
                        df::DataFrame, add_noise, SNR_nu, kernel_size_synchrotron, IonizationFraction::Float64,
                        nuArray::AbstractArray, PhiArray, PixelLength_pc, PixelLength_cm,
-                       BoxLength_pc, DistanceArray, conversionn, conversionT, conversionB; log_progress::Bool = false, rng = Random.default_rng(), expected_shape = nothing, metadata = nothing)
+                       BoxLength_pc, DistanceArray, conversionn, conversionT, conversionB; log_progress::Bool = false, rng = Random.default_rng(), expected_shape = nothing, metadata = nothing,
+                       rm_clean_enabled::Bool = false, rm_clean_gain::Real = 0.1, rm_clean_niter::Integer = 1000, rm_clean_threshold::Real = 0.0)
     return _process_synchrotron_common(
         simu,
         LOS,
@@ -285,13 +486,18 @@ function ProcessSynchrotron(simu::String, LOS, FaradayRotation::String, response
         rng = rng,
         expected_shape = expected_shape,
         metadata = metadata,
+        rm_clean_enabled = rm_clean_enabled,
+        rm_clean_gain = rm_clean_gain,
+        rm_clean_niter = rm_clean_niter,
+        rm_clean_threshold = rm_clean_threshold,
     )
 end
 
 function ProcessSynchrotron(simu::String, LOS, FaradayRotation::String, responseSynchrotron::String,
                        df::DataFrame,  add_noise, SNR_nu, kernel_size_synchrotron, nuArray::AbstractArray, PhiArray,
                        PixelLength_pc, PixelLength_cm, BoxLength_pc,
-                       DistanceArray, conversionn, conversionT, conversionB; log_progress::Bool = false, rng = Random.default_rng(), expected_shape = nothing, metadata = nothing)
+                       DistanceArray, conversionn, conversionT, conversionB; log_progress::Bool = false, rng = Random.default_rng(), expected_shape = nothing, metadata = nothing,
+                       rm_clean_enabled::Bool = false, rm_clean_gain::Real = 0.1, rm_clean_niter::Integer = 1000, rm_clean_threshold::Real = 0.0)
     return _process_synchrotron_common(
         simu,
         LOS,
@@ -313,5 +519,9 @@ function ProcessSynchrotron(simu::String, LOS, FaradayRotation::String, response
         rng = rng,
         expected_shape = expected_shape,
         metadata = metadata,
+        rm_clean_enabled = rm_clean_enabled,
+        rm_clean_gain = rm_clean_gain,
+        rm_clean_niter = rm_clean_niter,
+        rm_clean_threshold = rm_clean_threshold,
     )
 end

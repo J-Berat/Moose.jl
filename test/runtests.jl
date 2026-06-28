@@ -12,6 +12,20 @@ function write_test_fits(path, data)
     end
 end
 
+function write_test_healpix_cube(path, pixels; nside=1, order=:ring)
+    # Store one row per HEALPix pixel and one vector element per LOS shell.
+    data = permutedims(Matrix(pixels))
+    ordering = order == :nested ? "NESTED" : "RING"
+    header = FITSHeader(
+        ["PIXTYPE", "ORDERING", "NSIDE", "FIRSTPIX", "LASTPIX", "INDXSCHM"],
+        ["HEALPIX", ordering, Int(nside), 1, size(pixels, 1), "IMPLICIT"],
+        ["", "", "", "", "", ""],
+    )
+    FITS(path, "w") do fits
+        write(fits, ["PIXELS"], [data]; header=header, name="MAP")
+    end
+end
+
 function write_test_emissivity(path)
     open(path, "w") do io
         write(io, "B\tnu\te_para\te_perp\n")
@@ -381,6 +395,31 @@ end
         @test err isa MOOSE.MooseError
         @test err.code == :invalid_faraday_range
     end
+
+    mktempdir() do base_dir
+        sim_dir = joinpath(base_dir, "simu5")
+        mkdir(sim_dir)
+        interpolation_path = joinpath(base_dir, "emissivity.csv")
+        write(interpolation_path, "B\tnu\te_para\te_perp\n1.0\t120.0\t1.0\t2.0\n")
+
+        cfg = Dict(
+            "base_dir" => base_dir,
+            "simulations" => [sim_dir],
+            "interpolation_file_path" => interpolation_path,
+            "faraday" => Dict("enabled" => "N", "phimin" => -20.0, "phimax" => 20.0, "dphi" => 1.0),
+            "rm_clean" => Dict("enabled" => true),
+        )
+
+        err = try
+            build_config(cfg, "config.json")
+            nothing
+        catch e
+            e
+        end
+
+        @test err isa MOOSE.MooseError
+        @test err.code == :invalid_rm_clean
+    end
 end
 
 @testset "Regression — BoxLength_pix must match FITS cube dimensions" begin
@@ -472,6 +511,9 @@ end
         @test isfile(joinpath(result_dir, "Pnu.fits"))
         @test isfile(joinpath(result_dir, "Tnu.fits"))
         @test isfile(joinpath(result_dir, "Pnumax.fits"))
+        @test isfile(joinpath(result_dir, "polarization_angle_vs_lambda2.png"))
+        @test isfile(joinpath(result_dir, "fractional_polarization_vs_lambda2.png"))
+        @test isfile(joinpath(result_dir, "stokes_qu_diagram.png"))
         @test isfile(joinpath(sim_dir, "z", "Synchrotron", "ne.fits"))
         @test isfile(joinpath(base_dir, "MOOSE_summary.log"))
 
@@ -506,6 +548,126 @@ end
     end
 end
 
+@testset "Config-driven RM-CLEAN FITS outputs" begin
+    mktempdir() do base_dir
+        sim_dir = joinpath(base_dir, "tiny_clean")
+        mkdir(sim_dir)
+
+        cube = fill(1.0, 2, 2, 2)
+        write_test_fits(joinpath(sim_dir, "Bx.fits"), cube)
+        write_test_fits(joinpath(sim_dir, "By.fits"), fill(0.5, 2, 2, 2))
+        write_test_fits(joinpath(sim_dir, "Bz.fits"), fill(0.25, 2, 2, 2))
+        write_test_fits(joinpath(sim_dir, "density.fits"), cube)
+        write_test_fits(joinpath(sim_dir, "temperature.fits"), fill(100.0, 2, 2, 2))
+
+        interpolation_path = joinpath(base_dir, "emissivity.csv")
+        write_test_emissivity(interpolation_path)
+
+        config_path = joinpath(base_dir, "moose_config.json")
+        cfg = Dict(
+            "base_dir" => base_dir,
+            "simulations" => [sim_dir],
+            "chosen_LOS" => ["z"],
+            "interpolation_file_path" => interpolation_path,
+            "faraday" => Dict("enabled" => "Y", "phimin" => -2.0, "phimax" => 2.0, "dphi" => 2.0),
+            "rm_clean" => Dict("enabled" => true, "gain" => 0.1, "niter" => 5, "threshold" => 0.0),
+            "responseSynchrotron" => "N",
+            "add_noise" => "N",
+            "ne_option" => "2",
+            "IonizationFraction" => 0.1,
+            "freq" => Dict("start" => 100.0, "end" => 101.0, "step" => 1.0),
+            "BoxLength_pc" => 2.0,
+            "BoxLength_pix" => 2,
+            "log_progress" => false,
+        )
+        write(config_path, JSON.json(cfg))
+
+        MOOSE.MOOSE_from_config(config_path; quiet = true)
+
+        result_dir = joinpath(sim_dir, "z", "Synchrotron", "WithFaraday")
+        @test isfile(joinpath(result_dir, "FDF.fits"))
+        @test isfile(joinpath(result_dir, "RMSF.fits"))
+        @test isfile(joinpath(result_dir, "cleanFDF.fits"))
+        @test isfile(joinpath(result_dir, "realCleanFDF.fits"))
+        @test isfile(joinpath(result_dir, "imagCleanFDF.fits"))
+        @test isfile(joinpath(result_dir, "residualFDF.fits"))
+
+        clean = read(FITS(joinpath(result_dir, "cleanFDF.fits"))[1])
+        residual = read(FITS(joinpath(result_dir, "residualFDF.fits"))[1])
+        @test size(clean) == (2, 2, 3)
+        @test size(residual) == (2, 2, 3)
+        @test all(isfinite, clean)
+        @test all(isfinite, residual)
+
+        header = FITS(joinpath(result_dir, "cleanFDF.fits")) do fits
+            read_header(fits[1])
+        end
+        @test header["RMCLEAN"] == true
+        @test header["RMCNITER"] == 5
+    end
+end
+
+@testset "Minimal config end-to-end HEALPix run" begin
+    mktempdir() do base_dir
+        sim_dir = joinpath(base_dir, "tiny_hp")
+        mkdir(sim_dir)
+
+        npix = 12
+        write_test_healpix_cube(joinpath(sim_dir, "Bx.fits"), hcat(fill(1.0, npix), fill(1.2, npix)))
+        write_test_healpix_cube(joinpath(sim_dir, "By.fits"), hcat(fill(0.5, npix), fill(0.4, npix)))
+        write_test_healpix_cube(joinpath(sim_dir, "Bz.fits"), hcat(fill(0.25, npix), fill(0.3, npix)))
+        write_test_healpix_cube(joinpath(sim_dir, "density.fits"), hcat(fill(1.0, npix), fill(1.1, npix)))
+        write_test_healpix_cube(joinpath(sim_dir, "temperature.fits"), hcat(fill(100.0, npix), fill(110.0, npix)))
+
+        interpolation_path = joinpath(base_dir, "emissivity.csv")
+        write_test_emissivity(interpolation_path)
+
+        config_path = joinpath(base_dir, "moose_config.json")
+        cfg = Dict(
+            "base_dir" => base_dir,
+            "simulations" => [sim_dir],
+            "chosen_LOS" => ["z"],
+            "interpolation_file_path" => interpolation_path,
+            "faraday" => Dict("enabled" => "Y", "phimin" => -2.0, "phimax" => 2.0, "dphi" => 2.0),
+            "rm_clean" => Dict("enabled" => true, "gain" => 0.1, "niter" => 5, "threshold" => 0.0),
+            "responseSynchrotron" => "N",
+            "add_noise" => "N",
+            "ne_option" => "2",
+            "IonizationFraction" => 0.1,
+            "freq" => Dict("start" => 100.0, "end" => 101.0, "step" => 1.0),
+            "BoxLength_pc" => 2.0,
+            "BoxLength_pix" => 2,
+            "log_progress" => false,
+        )
+        write(config_path, JSON.json(cfg))
+
+        MOOSE.MOOSE_from_config(config_path; quiet = true)
+
+        root_dir = joinpath(sim_dir, "z", "Synchrotron")
+        result_dir = joinpath(root_dir, "WithFaraday")
+        stack = MOOSE.read_fits_grid_stack(joinpath(sim_dir, "Bx.fits"); column=:all)
+        @test stack isa MOOSE.HealpixStack
+        @test size(stack) == (npix, 2)
+        @test MOOSE.detect_fits_grid(joinpath(root_dir, "intBtotal.fits")) == :healpix
+        @test isfile(joinpath(root_dir, "ne_0001_p0p0.fits"))
+        @test isfile(joinpath(root_dir, "ne_0002_p1p0.fits"))
+        @test isfile(joinpath(result_dir, "Qnu_0001_p1p0e8.fits"))
+        @test isfile(joinpath(result_dir, "Unu_0002_p1p01e8.fits"))
+        @test isfile(joinpath(result_dir, "Pnumax.fits"))
+        @test isfile(joinpath(result_dir, "FDF_0002_p0p0.fits"))
+        @test isfile(joinpath(result_dir, "realFDF_0001_m2p0.fits"))
+        @test isfile(joinpath(result_dir, "imagFDF_0003_p2p0.fits"))
+        @test isfile(joinpath(result_dir, "cleanFDF_0002_p0p0.fits"))
+        @test isfile(joinpath(result_dir, "realCleanFDF_0001_m2p0.fits"))
+        @test isfile(joinpath(result_dir, "imagCleanFDF_0003_p2p0.fits"))
+        @test isfile(joinpath(result_dir, "residualFDF_0002_p0p0.fits"))
+
+        q_map = MOOSE.read_healpix_map(joinpath(result_dir, "Qnu_0001_p1p0e8.fits"))
+        @test length(q_map) == npix
+        @test all(isfinite, collect(q_map))
+    end
+end
+
 @testset "CLI reproducibility options" begin
     _, _, _, overrides = parse_cli_args(["--rng-seed", "42"])
     @test overrides["rng_seed"] == 42
@@ -535,6 +697,8 @@ end
     mktempdir() do dir
         map_path = joinpath(dir, "q.fits")
         MOOSE.write_healpix_map(map_path, q_stack[:, 1]; nside=q_stack.nside, order=q_stack.order)
+        @test MOOSE.detect_fits_grid(map_path) == :healpix
+        @test MOOSE.is_healpix_fits(map_path)
         reread = MOOSE.read_healpix_map(map_path)
         @test collect(reread) == q_stack[:, 1]
 
@@ -542,5 +706,137 @@ end
         @test length(paths.fdf) == 3
         @test all(isfile, paths.fdf)
         @test length(MOOSE.read_healpix_map(first(paths.fdf))) == 12
+
+        q_paths = [joinpath(dir, "q$(i).fits") for i in eachindex(q_maps)]
+        u_paths = [joinpath(dir, "u$(i).fits") for i in eachindex(u_maps)]
+        for i in eachindex(q_maps)
+            MOOSE.write_healpix_map(q_paths[i], collect(q_maps[i]); nside=1, order=:ring)
+            MOOSE.write_healpix_map(u_paths[i], collect(u_maps[i]); nside=1, order=:ring)
+        end
+        auto_hp = MOOSE.RMSynthesisAuto(q_paths, u_paths, [1.0e9, 1.1e9], [-10.0, 0.0, 10.0])
+        @test auto_hp isa MOOSE.HealpixRMResult
+        @test auto_hp.fdf ≈ result.fdf
+
+        q_cube_path = joinpath(dir, "q_cube.fits")
+        u_cube_path = joinpath(dir, "u_cube.fits")
+        q_cube = reshape([1.0, 0.5, 1.0, 0.5], 2, 1, 2)
+        u_cube = reshape([0.0, 0.25, 0.0, 0.25], 2, 1, 2)
+        write_test_fits(q_cube_path, q_cube)
+        write_test_fits(u_cube_path, u_cube)
+        @test MOOSE.detect_fits_grid(q_cube_path) == :image
+        @test MOOSE.is_image_fits(q_cube_path)
+        auto_cube = MOOSE.RMSynthesisAuto(q_cube_path, u_cube_path, [1.0e9, 1.1e9], [-10.0, 0.0, 10.0])
+        direct_cube = MOOSE.RMSynthesis(q_cube, u_cube, [1.0e9, 1.1e9], [-10.0, 0.0, 10.0])
+        @test auto_cube[1] ≈ direct_cube[1]
+        @test auto_cube[2] ≈ direct_cube[2]
+        @test auto_cube[3] ≈ direct_cube[3]
+    end
+end
+
+@testset "RMSF diagnostics" begin
+    nu = collect(range(1.0e9, 1.5e9, length = 64))    # Hz
+    phi = collect(range(-100.0, 100.0, length = 201)) # rad/m^2, dphi = 1.0
+    diag = MOOSE.rmsf_diagnostics(nu, phi)
+
+    # Symmetric lag grid matched to the Faraday-depth spacing, centred on zero.
+    @test length(diag.phi) == 2 * length(phi) - 1
+    @test diag.phi[argmin(abs.(diag.phi))] == 0.0
+    @test isapprox(diag.phi[2] - diag.phi[1], 1.0; atol = 1e-9)
+
+    # RMSF is normalised to unit peak at zero lag.
+    @test isapprox(maximum(abs.(diag.rmsf)), 1.0; atol = 1e-6)
+    @test isapprox(abs(diag.rmsf[argmin(abs.(diag.phi))]), 1.0; atol = 1e-6)
+
+    # Resolution metrics are positive and finite.
+    @test isfinite(diag.fwhm) && diag.fwhm > 0
+    @test diag.phi_max > 0
+    @test diag.max_scale > 0
+
+    # Theoretical resolution matches 2*sqrt(3)/Δλ²; measured agrees to tens of %.
+    lambda2 = (MOOSE.C_m ./ nu) .^ 2
+    dlambda2 = maximum(lambda2) - minimum(lambda2)
+    @test isapprox(diag.fwhm_theoretical, 2 * sqrt(3) / dlambda2; rtol = 1e-6)
+    @test isapprox(diag.fwhm, diag.fwhm_theoretical; rtol = 0.5)
+    @test isapprox(MOOSE.rmsf_diagnostics(reverse(nu), phi).fwhm_theoretical,
+                   diag.fwhm_theoretical; rtol = 1e-12)
+    @test_throws ErrorException MOOSE.rmsf_diagnostics(nu, [-100.0, -50.0, 10.0, 100.0])
+
+    mktempdir() do dir
+        path = MOOSE.write_rmsf(dir, diag)
+        @test isfile(path)
+        data, hdr = FITS(path) do f
+            (read(f[1]), read_header(f[1]))
+        end
+        @test size(data) == (length(diag.phi), 3)
+        @test isapprox(hdr["RMSFFWHM"], diag.fwhm; rtol = 1e-6)
+        @test isapprox(hdr["PHIMAX"], diag.phi_max; rtol = 1e-6)
+    end
+end
+
+@testset "RM-CLEAN" begin
+    nu = collect(range(1.0e9, 1.5e9, length = 64))     # Hz
+    phi = collect(range(-100.0, 100.0, length = 201))  # rad/m^2, dphi = 1.0
+    phi0 = 15.0
+    lambda2 = (MOOSE.C_m ./ nu) .^ 2
+    P = @. 1.0 * exp(2im * (0.3 + phi0 * lambda2))     # one Faraday-thin source
+    Q = real.(P)
+    U = imag.(P)
+
+    absF, realF, imagF = MOOSE.RMSynthesis(Q, U, nu, phi)
+    diag = MOOSE.rmsf_diagnostics(nu, phi)
+    result = MOOSE.RMClean(Q, U, nu, phi; gain = 0.1, niter = 2000,
+                           threshold = 1e-3, diagnostics = diag)
+
+    # Output shapes match the (1D) input FDF, and the RMSF is carried through.
+    @test size(result.cleanFDF) == size(absF)
+    @test length(result.phi) == length(phi)
+    @test result.rmsf === diag
+
+    # The restored peak and the dominant clean component land on the source.
+    @test isapprox(phi[argmax(result.cleanFDF)], phi0; atol = 1.5)
+    @test isapprox(phi[argmax(abs.(result.model))], phi0; atol = 1.5)
+
+    # Cleaning removes the RMSF sidelobe power.
+    dirty_energy = sum(abs2, complex.(realF, imagF))
+    residual_energy = sum(abs2, result.residual)
+    @test residual_energy < 0.25 * dirty_energy
+end
+
+@testset "RM-CLEAN cube and HEALPix" begin
+    nu = collect(range(1.0e9, 1.5e9, length = 32))   # Hz
+    phi = collect(range(-50.0, 50.0, length = 101))  # rad/m^2
+    lambda2 = (MOOSE.C_m ./ nu) .^ 2
+
+    # 3D cube: two spatial pixels with different Faraday depths.
+    Q = Array{Float64}(undef, 2, 1, length(nu))
+    U = Array{Float64}(undef, 2, 1, length(nu))
+    for (j, phi0) in enumerate((-10.0, 12.0))
+        P = @. exp(2im * (0.1 + phi0 * lambda2))
+        Q[j, 1, :] .= real.(P)
+        U[j, 1, :] .= imag.(P)
+    end
+
+    result = MOOSE.RMClean(Q, U, nu, phi; gain = 0.1, niter = 1500, threshold = 1e-3)
+    @test size(result.cleanFDF) == (2, 1, length(phi))
+    @test isapprox(phi[argmax(result.cleanFDF[1, 1, :])], -10.0; atol = 2.0)
+    @test isapprox(phi[argmax(result.cleanFDF[2, 1, :])], 12.0; atol = 2.0)
+
+    # HEALPix wrapper returns a writable HealpixRMResult of the restored FDF.
+    q_maps = [MOOSE.healpix_map(fill(0.3, 12); order = :ring) for _ in 1:length(nu)]
+    u_maps = [MOOSE.healpix_map(fill(0.1, 12); order = :ring) for _ in 1:length(nu)]
+    hp = MOOSE.RMCleanHealpix(q_maps, u_maps, nu, phi; gain = 0.1, niter = 500, threshold = 1e-3)
+    @test hp isa MOOSE.HealpixRMResult
+    @test size(hp.fdf) == (12, length(phi))
+    @test hp.nside == 1
+    @test hp.order == :ring
+    @test hp.phi == phi
+    hp_auto = MOOSE.RMCleanAuto(q_maps, u_maps, nu, phi; gain = 0.1, niter = 500, threshold = 1e-3)
+    @test hp_auto isa MOOSE.HealpixRMResult
+    @test hp_auto.fdf ≈ hp.fdf
+
+    mktempdir() do dir
+        paths = MOOSE.write_healpix_rm_result(joinpath(dir, "clean"), hp; prefix = "clean")
+        @test length(paths.fdf) == length(phi)
+        @test all(isfile, paths.fdf)
     end
 end

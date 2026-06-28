@@ -1175,7 +1175,7 @@ version = "2025.2.0+0"
 deps = ["CSV", "CairoMakie", "Crayons", "DataFrames", "Dates", "Dierckx", "Distributions", "FFTW", "FITSIO", "Healpix", "ImageFiltering", "Images", "Interpolations", "JSON", "KernelDensity", "LinearAlgebra", "Logging", "QuadGK", "Random", "SHA", "SpecialFunctions", "Statistics", "StatsBase", "StringEncodings", "TOML"]
 path = "."
 uuid = "7f5f1d03-1815-4f27-9af3-e39b23619c26"
-version = "1.0.0"
+version = "0.1.0"
 
 [[deps.MacroTools]]
 git-tree-sha1 = "1e0228a030642014fe5cfe68c2c0a818f9e3f522"

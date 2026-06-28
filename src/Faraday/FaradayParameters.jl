@@ -15,8 +15,7 @@ function rmsynthesis_parameters(ν_min, ν_max, N)
 end
 
 function rmsynthesis_parameters(ν_range)
-    ν_min = float(first(ν_range))
-    ν_max = float(last(ν_range))
+    ν_min, ν_max = extrema(float.(ν_range))
     N = length(ν_range)
     return rmsynthesis_parameters(ν_min, ν_max, N)
 end

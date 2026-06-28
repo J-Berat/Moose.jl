@@ -1,7 +1,7 @@
 name = "MOOSE"
 uuid = "7f5f1d03-1815-4f27-9af3-e39b23619c26"
 authors = ["MOOSE Contributors"]
-version = "1.0.0"
+version = "0.1.0"
 
 [deps]
 CairoMakie = "13f3f980-e62b-5c42-98c6-ff1f3baf88f0"

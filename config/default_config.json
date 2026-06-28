@@ -26,6 +26,12 @@
     "phimax": 20.0,
     "dphi": 0.1
   },
+  "rm_clean": {
+    "enabled": false,
+    "gain": 0.1,
+    "niter": 1000,
+    "threshold": 0.0
+  },
   "responseSynchrotron": "N",
   "kernel_size_synchrotron": 154.0,
   "add_noise": "N",

@@ -53,6 +53,7 @@ include(joinpath("Synchrotron", "Tnu.jl"))
 
 include(joinpath("Faraday", "FaradayParameters.jl"))
 include(joinpath("Faraday", "RMSynthesis.jl"))
+include(joinpath("Faraday", "RMClean.jl"))
 
 include(joinpath("Filtering", "Filter.jl"))
 
@@ -60,6 +61,7 @@ include(joinpath("Statistics", "EffectiveWidth.jl"))
 include(joinpath("Statistics", "Moments.jl"))
 include(joinpath("Statistics", "RMS.jl"))
 include(joinpath("Statistics", "PowerSpectrum.jl"))
+include(joinpath("Statistics", "PolarizationDiagnostics.jl"))
 include(joinpath("Statistics", "Statistics.jl"))
 
 include(joinpath("SyntheticObservations", "SimulationDiscovery.jl"))
@@ -76,7 +78,13 @@ using .MOOSEFromConfig: MOOSE_from_config
 export run_moose, MOOSE_from_config, MooseError, cli_error, config_error,
        HealpixStack, HealpixRMResult, RMSynthesisHealpix, healpix_map,
        healpix_maps_from_stack, read_healpix_map, read_healpix_stack,
-       write_healpix_map, write_healpix_stack, write_healpix_rm_result
+       detect_fits_grid, is_healpix_fits, is_image_fits,
+       read_fits_grid, read_fits_grid_stack,
+       write_healpix_map, write_healpix_stack, write_healpix_rm_result,
+       RMSynthesisAuto,
+       rmsf_diagnostics, RMSFDiagnostics, write_rmsf,
+       RMClean, RMCleanHealpix, RMCleanAuto, RMCleanResult,
+       polarization_diagnostic_spectra, write_polarization_diagnostic_plots
 
 const MOOSE_PROJECT_ROOT = normpath(joinpath(@__DIR__, ".."))
 

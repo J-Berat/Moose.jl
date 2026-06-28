@@ -158,3 +158,149 @@ function getRMSF(nuArray::AbstractArray, PhiArray::AbstractArray; log_progress::
 
     return(abs.(RMSF),fwhmRMSF)
 end
+
+"""
+    RMSFDiagnostics
+
+Container for the Rotation Measure Spread Function (RMSF) and the resolution
+metrics that characterise an RM-synthesis experiment.
+
+# Fields
+- `phi::Vector{Float64}`: Faraday-depth lags at which the RMSF is sampled
+  (rad/m²). The grid is symmetric about `0` and shares the spacing of the
+  Faraday-depth array passed to [`rmsf_diagnostics`](@ref).
+- `rmsf::Vector{ComplexF64}`: complex RMSF `R(φ)`, normalised so that
+  `R(0) ≈ 1`.
+- `fwhm::Float64`: full width at half maximum of `|R(φ)|`, measured directly
+  from the sampled main lobe (rad/m²). This is the effective Faraday
+  resolution and the natural restoring-beam width for RM-CLEAN.
+- `fwhm_theoretical::Float64`: analytic resolution `2√3 / Δλ²` (rad/m²).
+- `phi_max::Float64`: largest recoverable `|φ|` set by the channel width in
+  `λ²` (rad/m²).
+- `max_scale::Float64`: largest Faraday-thick structure that stays sensitive,
+  `π / λ²_min` (rad/m²).
+- `lambda2_min`, `lambda2_max`, `lambda0_2::Float64`: minimum, maximum and
+  weighted-mean `λ²` of the observation (m²).
+"""
+struct RMSFDiagnostics
+    phi::Vector{Float64}
+    rmsf::Vector{ComplexF64}
+    fwhm::Float64
+    fwhm_theoretical::Float64
+    phi_max::Float64
+    max_scale::Float64
+    lambda2_min::Float64
+    lambda2_max::Float64
+    lambda0_2::Float64
+end
+
+# Uniform spacing of a Faraday-depth sampling array.
+function _uniform_step(values::AbstractArray; name::AbstractString = "sample grid")
+    n = length(values)
+    n >= 2 || error("At least two samples are required to infer a step size.")
+
+    step = Float64(values[2]) - Float64(values[1])
+    tol = max(1e-10, 1e-8 * max(abs(step), maximum(abs, Float64.(values))))
+    for i in 3:n
+        local_step = Float64(values[i]) - Float64(values[i - 1])
+        isapprox(local_step, step; atol = tol, rtol = 1e-8) ||
+            error("$(name) must be uniformly spaced; step $(i - 1) is $(local_step), expected $(step).")
+    end
+
+    return step
+end
+
+# FWHM of a sampled, single-peaked curve via linear interpolation of the
+# half-maximum crossings on either side of the global maximum.
+function _measure_fwhm(x::AbstractVector, y::AbstractVector)
+    peak, ipk = findmax(y)
+    (isfinite(peak) && peak > 0) || return NaN
+    half = peak / 2
+
+    cross(i, j) = begin
+        yi, yj = y[i], y[j]
+        yi == yj ? x[i] : x[i] + (half - yi) * (x[j] - x[i]) / (yj - yi)
+    end
+
+    l = ipk
+    while l > 1 && y[l] > half
+        l -= 1
+    end
+    left = l == ipk ? x[ipk] : (y[l] > half ? x[l] : cross(l, l + 1))
+
+    r = ipk
+    while r < length(y) && y[r] > half
+        r += 1
+    end
+    right = r == ipk ? x[ipk] : (y[r] > half ? x[r] : cross(r, r - 1))
+
+    return right - left
+end
+
+"""
+    rmsf_diagnostics(nuArray, PhiArray) -> RMSFDiagnostics
+
+Compute the complex Rotation Measure Spread Function and the standard
+RM-synthesis resolution metrics for a given frequency coverage.
+
+# Arguments
+- `nuArray::AbstractArray`: observed frequencies in **Hz**.
+- `PhiArray::AbstractArray`: the (uniformly spaced) Faraday-depth array used for
+  RM synthesis, in rad/m². Its spacing sets the RMSF sampling.
+
+# Returns
+- [`RMSFDiagnostics`](@ref) with the sampled complex RMSF and the resolution
+  metrics (`fwhm`, `fwhm_theoretical`, `phi_max`, `max_scale`).
+
+The RMSF is evaluated on a symmetric lag grid spanning `±(N-1)·δφ`, where `N`
+is `length(PhiArray)` and `δφ` its spacing, so the same object can act as the
+convolution kernel for [`RMClean`](@ref).
+
+# Example
+```julia
+nu = collect(range(1.0e9, 1.5e9, length = 64))
+phi = collect(range(-100.0, 100.0, length = 201))
+diag = rmsf_diagnostics(nu, phi)
+diag.fwhm          # measured Faraday resolution (rad/m²)
+diag.phi_max       # maximum recoverable |φ| (rad/m²)
+```
+"""
+function rmsf_diagnostics(nuArray::AbstractArray, PhiArray::AbstractArray)
+    length(nuArray) >= 2 || error("rmsf_diagnostics requires at least two frequencies.")
+    length(PhiArray) >= 2 || error("rmsf_diagnostics requires at least two Faraday depths.")
+
+    LambdaSqArray = @. (C_m / nuArray)^2
+    nLambda = length(LambdaSqArray)
+    K = 1.0 / nLambda
+    Lambda0Sq = sum(LambdaSqArray) * K
+    a = LambdaSqArray .- Lambda0Sq
+
+    dphi = _uniform_step(PhiArray; name = "PhiArray")
+    n = length(PhiArray) - 1
+    phigrid = collect(-n:n) .* dphi
+
+    rmsf = Vector{ComplexF64}(undef, length(phigrid))
+    @inbounds for (idx, phi) in enumerate(phigrid)
+        acc = zero(ComplexF64)
+        for l in eachindex(a)
+            acc += cis(-2.0 * phi * a[l])
+        end
+        rmsf[idx] = K * acc
+    end
+
+    fwhm_measured = _measure_fwhm(phigrid, abs.(rmsf))
+    delta_phi, max_scale, phi_max = rmsynthesis_parameters(nuArray)
+    fwhm = (isfinite(fwhm_measured) && fwhm_measured > 0) ? fwhm_measured : delta_phi
+
+    return RMSFDiagnostics(
+        phigrid,
+        rmsf,
+        fwhm,
+        delta_phi,
+        phi_max,
+        max_scale,
+        minimum(LambdaSqArray),
+        maximum(LambdaSqArray),
+        Lambda0Sq,
+    )
+end

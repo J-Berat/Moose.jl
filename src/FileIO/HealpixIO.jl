@@ -7,6 +7,7 @@ preserving NSIDE and ordering metadata for writing results back to HEALPix FITS.
 """
 
 const HealpixOrderName = Union{Symbol, AbstractString}
+const FITSGridKind = Symbol
 
 struct HealpixStack{T}
     pixels::Matrix{T}
@@ -22,6 +23,56 @@ struct HealpixRMResult{T}
     nside::Int
     order::Symbol
 end
+
+function _fits_header_value(header, key::AbstractString, default=nothing)
+    try
+        return header[key]
+    catch
+        return default
+    end
+end
+
+"""
+    detect_fits_grid(filename) -> Symbol
+
+Detect whether a FITS file stores a HEALPix map (`:healpix`) or a regular FITS
+image (`:image`) by inspecting HDU headers. HEALPix FITS files are recognised
+from the standard `PIXTYPE=HEALPIX` metadata, with `ORDERING`/`NSIDE` as a
+fallback for older files.
+"""
+function detect_fits_grid(filename::AbstractString)::FITSGridKind
+    validation_error = ensure_readable_file(filename; expected_exts=[".fits", ".fit", ".fts"])
+    validation_error === nothing || error(validation_error)
+
+    detected = FITS(filename) do fits
+        saw_image = false
+        for hdu in fits
+            header = read_header(hdu)
+            pixtype = _fits_header_value(header, "PIXTYPE", "")
+            ordering = _fits_header_value(header, "ORDERING", nothing)
+            nside = _fits_header_value(header, "NSIDE", nothing)
+            xtension = uppercase(String(_fits_header_value(header, "XTENSION", "")))
+            naxis = _fits_header_value(header, "NAXIS", 0)
+
+            if uppercase(String(pixtype)) == "HEALPIX" || (ordering !== nothing && nside !== nothing && xtension == "BINTABLE")
+                return :healpix
+            end
+
+            parsed_naxis = tryparse(Int, string(naxis))
+            if parsed_naxis !== nothing && parsed_naxis > 0 && xtension != "BINTABLE"
+                saw_image = true
+            end
+        end
+
+        return saw_image ? :image : nothing
+    end
+
+    detected !== nothing && return detected
+    error("Could not detect whether $(filename) is a HEALPix FITS table or a regular FITS image.")
+end
+
+is_healpix_fits(filename::AbstractString) = detect_fits_grid(filename) == :healpix
+is_image_fits(filename::AbstractString) = detect_fits_grid(filename) == :image
 
 Base.size(stack::HealpixStack) = size(stack.pixels)
 Base.size(stack::HealpixStack, dim::Integer) = size(stack.pixels, dim)
@@ -76,10 +127,149 @@ function read_healpix_map(filename::AbstractString; column=1, T::Type=Float64)
     return Healpix.readMapFromFITS(String(filename), column, T)
 end
 
+function _healpix_table_hdu_info(filename::AbstractString)
+    validation_error = ensure_readable_file(filename; expected_exts=[".fits", ".fit", ".fts"])
+    validation_error === nothing || error(validation_error)
+
+    info = FITS(filename) do fits
+        for idx in 1:length(fits)
+            hdu = fits[idx]
+            header = read_header(hdu)
+            pixtype = uppercase(String(_fits_header_value(header, "PIXTYPE", "")))
+            ordering = _fits_header_value(header, "ORDERING", nothing)
+            nside = _fits_header_value(header, "NSIDE", nothing)
+            xtension = uppercase(String(_fits_header_value(header, "XTENSION", "")))
+            if pixtype == "HEALPIX" || (ordering !== nothing && nside !== nothing && xtension == "BINTABLE")
+                return (;
+                    hdu_index = idx,
+                    nside = Int(nside),
+                    order = normalize_healpix_order(ordering),
+                    colnames = FITSIO.colnames(hdu),
+                    nrows = Int(_fits_header_value(header, "NAXIS2", 0)),
+                )
+            end
+        end
+
+        return nothing
+    end
+
+    info === nothing && error("No HEALPix binary table HDU found in $(filename).")
+    return info
+end
+
+function _normalize_healpix_columns(column)
+    column === :all && return :all
+    if column isa Integer || column isa AbstractString
+        return [column]
+    elseif column isa AbstractVector || column isa Tuple
+        return collect(column)
+    end
+
+    error("Invalid HEALPix column selector $(column). Use an integer, name, list, tuple, or :all.")
+end
+
+function _read_healpix_column_data(filename::AbstractString, column, info, ::Type{T}) where {T}
+    FITS(filename) do fits
+        hdu = fits[info.hdu_index]
+        name = column isa Integer ? info.colnames[Int(column)] : String(column)
+        data = read(hdu, name; case_sensitive=false)
+        return T.(data)
+    end
+end
+
+function _healpix_matrix_from_column_data(data::AbstractArray, info)
+    npix = Healpix.nside2npix(info.nside)
+    if ndims(data) == 1
+        length(data) == npix || error("HEALPix column has $(length(data)) values, expected $(npix) for NSIDE=$(info.nside).")
+        return reshape(collect(data), npix, 1)
+    elseif ndims(data) == 2
+        if size(data, 1) == npix
+            return Matrix(data)
+        elseif size(data, 2) == npix
+            return permutedims(data)
+        elseif length(data) % npix == 0
+            return reshape(vec(data), npix, length(data) ÷ npix)
+        end
+    end
+
+    error("Cannot interpret HEALPix table column with size $(size(data)) as an NSIDE=$(info.nside) map or cube.")
+end
+
+function read_healpix_stack(filename::AbstractString; column=:all, T::Type=Float64)
+    info = _healpix_table_hdu_info(filename)
+    columns = _normalize_healpix_columns(column)
+    columns = columns === :all ? collect(eachindex(info.colnames)) : columns
+    isempty(columns) && error("Cannot read an empty HEALPix column selection.")
+
+    chunks = Matrix{T}[]
+    for col in columns
+        data = _read_healpix_column_data(filename, col, info, T)
+        push!(chunks, _healpix_matrix_from_column_data(data, info))
+    end
+
+    pixels = reduce(hcat, chunks)
+    return HealpixStack(pixels; nside=info.nside, order=info.order)
+end
+
 function read_healpix_stack(files::AbstractVector{<:AbstractString}; column=1, T::Type=Float64)
     isempty(files) && error("Cannot read an empty HEALPix stack.")
     return HealpixStack([read_healpix_map(file; column=column, T=T) for file in files])
 end
+
+function read_fits_grid(filename::AbstractString, conversion::Real=1.0;
+    column=1,
+    T::Type=Float64,
+    expected_ndims=nothing,
+    allow_nonfinite::Bool=false)
+
+    kind = detect_fits_grid(filename)
+    if kind == :healpix
+        expected_ndims === nothing ||
+            error("$(filename) is a HEALPix FITS table, not a $(expected_ndims)D image cube.")
+        stack = read_healpix_stack(filename; column=column, T=T)
+        if size(stack.pixels, 2) == 1
+            map = healpix_map(view(stack.pixels, :, 1); nside=stack.nside, order=stack.order)
+            return conversion == 1 ? map : healpix_map(collect(map) .* conversion; nside=stack.nside, order=stack.order)
+        end
+
+        return conversion == 1 ? stack : HealpixStack(stack.pixels .* conversion; nside=stack.nside, order=stack.order)
+    end
+
+    return read_file(filename, conversion; expected_ndims=expected_ndims, allow_nonfinite=allow_nonfinite)
+end
+
+function read_fits_grid_stack(files::AbstractVector{<:AbstractString}, conversion::Real=1.0;
+    column=1,
+    T::Type=Float64,
+    expected_ndims=nothing,
+    allow_nonfinite::Bool=false)
+
+    isempty(files) && error("Cannot read an empty FITS stack.")
+    kinds = detect_fits_grid.(files)
+    length(unique(kinds)) == 1 ||
+        error("Cannot mix HEALPix FITS tables and regular FITS images in one stack.")
+
+    if first(kinds) == :healpix
+        expected_ndims === nothing ||
+            error("HEALPix FITS stacks do not have a regular image dimensionality.")
+        stack = length(files) == 1 ? read_healpix_stack(first(files); column=column, T=T) : read_healpix_stack(files; column=column, T=T)
+        return conversion == 1 ? stack : HealpixStack(stack.pixels .* conversion; nside=stack.nside, order=stack.order)
+    end
+
+    if length(files) == 1
+        return read_file(first(files), conversion; expected_ndims=expected_ndims, allow_nonfinite=allow_nonfinite)
+    end
+
+    planes = [read_file(file, conversion; expected_ndims=expected_ndims, allow_nonfinite=allow_nonfinite) for file in files]
+    first_size = size(first(planes))
+    all(size(plane) == first_size for plane in planes) ||
+        error("All regular FITS image planes in a stack must have the same shape.")
+
+    return cat(planes...; dims=ndims(first(planes)) + 1)
+end
+
+read_fits_grid_stack(file::AbstractString, conversion::Real=1.0; kwargs...) =
+    read_fits_grid_stack([file], conversion; kwargs...)
 
 function HealpixStack(maps::AbstractVector)
     isempty(maps) && error("Cannot build a HEALPix stack from an empty map list.")
@@ -112,11 +302,32 @@ end
 
 function _healpix_stack_from_input(input; nside=nothing, order::HealpixOrderName=:ring)
     input isa HealpixStack && return input
+    input isa AbstractVector && hasproperty(input, :resolution) && return HealpixStack([input])
     input isa AbstractMatrix && return HealpixStack(input; nside=nside, order=order)
     input isa AbstractVector && !isempty(input) && hasproperty(first(input), :resolution) && return HealpixStack(input)
 
     error("Expected a HealpixStack, a matrix of size Npix x Nfreq, or a vector of Healpix.jl maps.")
 end
+
+_is_path_or_path_stack(input) =
+    input isa AbstractString ||
+    (input isa AbstractVector && !isempty(input) && all(item -> item isa AbstractString, input))
+
+function _read_auto_grid_input(input; conversion::Real=1.0, column=1, T::Type=Float64, expected_ndims=nothing, allow_nonfinite::Bool=false)
+    if input isa AbstractString
+        return read_fits_grid_stack(input, conversion; column=column, T=T, expected_ndims=expected_ndims, allow_nonfinite=allow_nonfinite)
+    elseif input isa AbstractVector && !isempty(input) && all(item -> item isa AbstractString, input)
+        return read_fits_grid_stack(input, conversion; column=column, T=T, expected_ndims=expected_ndims, allow_nonfinite=allow_nonfinite)
+    end
+
+    return input
+end
+
+_is_healpix_input(input; nside=nothing) =
+    input isa HealpixStack ||
+    (input isa AbstractVector && hasproperty(input, :resolution)) ||
+    (input isa AbstractVector && !isempty(input) && hasproperty(first(input), :resolution)) ||
+    (nside !== nothing && input isa AbstractMatrix)
 
 function healpix_maps_from_stack(stack::HealpixStack)
     return [healpix_map(view(stack.pixels, :, i); nside=stack.nside, order=stack.order) for i in axes(stack.pixels, 2)]
@@ -149,6 +360,40 @@ function RMSynthesisHealpix(Q, U, nuArray::AbstractArray, PhiArray::AbstractArra
         q_stack.nside,
         q_stack.order,
     )
+end
+
+"""
+    RMSynthesisAuto(Q, U, nuArray, PhiArray; kwargs...)
+
+Run RM synthesis while automatically dispatching regular FITS images/cubes to
+[`RMSynthesis`](@ref) and HEALPix FITS maps/stacks to
+[`RMSynthesisHealpix`](@ref). `Q` and `U` may be arrays, `HealpixStack`s,
+vectors of Healpix maps, single FITS image paths, or vectors of HEALPix FITS
+paths ordered like `nuArray`.
+"""
+function RMSynthesisAuto(Q, U, nuArray::AbstractArray, PhiArray::AbstractArray;
+    conversion::Real=1.0,
+    column=1,
+    T::Type=Float64,
+    nside::Union{Nothing, Integer}=nothing,
+    order::HealpixOrderName=:ring,
+    log_progress::Bool=false,
+    allow_nonfinite::Bool=false)
+
+    q_input = _read_auto_grid_input(Q; conversion=conversion, column=column, T=T, allow_nonfinite=allow_nonfinite)
+    u_input = _read_auto_grid_input(U; conversion=conversion, column=column, T=T, allow_nonfinite=allow_nonfinite)
+    q_is_healpix = _is_healpix_input(q_input; nside=nside)
+    u_is_healpix = _is_healpix_input(u_input; nside=nside)
+
+    q_is_healpix == u_is_healpix ||
+        error("Q and U must both be HEALPix grids or both be regular image/cube grids.")
+
+    if q_is_healpix
+        return RMSynthesisHealpix(q_input, u_input, nuArray, PhiArray;
+            nside=nside, order=order, log_progress=log_progress)
+    end
+
+    return RMSynthesis(q_input, u_input, nuArray, PhiArray; log_progress=log_progress)
 end
 
 function write_healpix_map(filename::AbstractString, pixels::AbstractVector;

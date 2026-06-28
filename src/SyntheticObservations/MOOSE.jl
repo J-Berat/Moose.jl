@@ -35,6 +35,9 @@ The function interacts with the user via the terminal to gather the following in
 ### 4. Synchrotron Data Processing
 - Option to include Faraday rotation.
   - Prompt: `Do you want to include Faraday rotation in the computation of Q and U?`
+- Option to deconvolve the Faraday dispersion function with RM-CLEAN when
+  Faraday rotation is enabled.
+  - Prompt: `Do you want to run RM-CLEAN on the Faraday dispersion function?`
 - Option to perform filtering.
   - Prompt: `Do you want to perform filtering for Synchrotron data?`
   - Specify the largest Fourier scale retained by the instrumental 0/1 mask.
@@ -161,7 +164,7 @@ function format_duration(elapsed)
     return string(padded_hours, ":", padded_minutes, ":", padded_seconds, ".", padded_ms)
 end
 
-function write_summary_log(base_dir, chosen_simu, chosen_LOS, elapsed; config_path="moose_config.json", config_source_path=nothing, config_saved_path=config_path, faraday="N", responseSynchrotron="N", add_noise="N", interpolation_file_path=nothing, conversionB=nothing, conversionn=nothing, conversionT=nothing, ne_option=nothing, rng_seed=nothing, config_hash=nothing)
+function write_summary_log(base_dir, chosen_simu, chosen_LOS, elapsed; config_path="moose_config.json", config_source_path=nothing, config_saved_path=config_path, faraday="N", rm_clean=false, responseSynchrotron="N", add_noise="N", interpolation_file_path=nothing, conversionB=nothing, conversionn=nothing, conversionT=nothing, ne_option=nothing, rng_seed=nothing, config_hash=nothing)
     log_path = joinpath(base_dir, "MOOSE_summary.log")
     open(log_path, "a") do io
         println(io)
@@ -183,6 +186,7 @@ function write_summary_log(base_dir, chosen_simu, chosen_LOS, elapsed; config_pa
         conversionn !== nothing && println(io, "Conversion n (to cm^-3): $(conversionn)")
         conversionT !== nothing && println(io, "Conversion T (to K): $(conversionT)")
         println(io, "Faraday rotation: $(faraday)")
+        println(io, "RM-CLEAN: $(rm_clean)")
         println(io, "Synchrotron filtering: $(responseSynchrotron)")
         println(io, "Noise added: $(add_noise)")
         interpolation_file_path !== nothing && println(io, "Interpolation file: $(interpolation_file_path)")
@@ -316,6 +320,10 @@ struct RunConfig
     phimin::Float64
     phimax::Float64
     dphi::Float64
+    rm_clean_enabled::Bool
+    rm_clean_gain::Float64
+    rm_clean_niter::Int
+    rm_clean_threshold::Float64
     responseSynchrotron::String
     kernel_size_synchrotron::Union{Nothing, Float64}
     add_noise::String
@@ -360,6 +368,11 @@ struct RunConfig
         config_path,
         log_progress=true,
         rng_seed=nothing,
+        ;
+        rm_clean_enabled=false,
+        rm_clean_gain=0.1,
+        rm_clean_niter=1000,
+        rm_clean_threshold=0.0,
     )
         faraday_flag = uppercase(faraday_rotation)
         response_flag = uppercase(responseSynchrotron)
@@ -388,6 +401,10 @@ struct RunConfig
             Float64(phimin),
             Float64(phimax),
             Float64(dphi),
+            Bool(rm_clean_enabled),
+            Float64(rm_clean_gain),
+            Int(rm_clean_niter),
+            Float64(rm_clean_threshold),
             response_flag,
             kernel_size_synchrotron,
             noise_flag,
@@ -430,6 +447,12 @@ function config_dict_from_struct(cfg::RunConfig)
         "phimin" => cfg.phimin,
         "phimax" => cfg.phimax,
         "dphi" => cfg.dphi,
+        "rm_clean" => Dict(
+            "enabled" => cfg.rm_clean_enabled,
+            "gain" => cfg.rm_clean_gain,
+            "niter" => cfg.rm_clean_niter,
+            "threshold" => cfg.rm_clean_threshold,
+        ),
         "responseSynchrotron" => cfg.responseSynchrotron,
         "kernel_size_synchrotron" => cfg.kernel_size_synchrotron,
         "add_noise" => cfg.add_noise,
@@ -497,6 +520,10 @@ function _run_moose_processing(cfg::RunConfig; quiet::Bool = false, persisted_co
         "PHIMAX" => cfg.phimax,
         "DPHI" => cfg.dphi,
         "PHIUNIT" => "rad/m^2",
+        "RMCLEAN" => cfg.rm_clean_enabled,
+        "RMCGAIN" => cfg.rm_clean_gain,
+        "RMCNITER" => cfg.rm_clean_niter,
+        "RMCTHRES" => cfg.rm_clean_threshold,
         "CONVB" => cfg.conversionB,
         "CONVN" => cfg.conversionn,
         "CONVT" => cfg.conversionT,
@@ -526,7 +553,8 @@ function _run_moose_processing(cfg::RunConfig; quiet::Bool = false, persisted_co
             @info "Processing line of sight" los = LOS
             box_length_pc = los_axis_value(cfg.BoxLength_pc, LOS)
             box_length_pix = los_axis_value(cfg.BoxLength_pix, LOS)
-            expected_shape = los_cube_shape(cfg.BoxLength_pix, LOS)
+            grid_kind = simulation_grid_kind(simu)
+            expected_shape = grid_kind == :healpix ? nothing : los_cube_shape(cfg.BoxLength_pix, LOS)
             PixelLength_pc, PixelLength_cm, DistanceArray = los_pixel_scale(box_length_pc, box_length_pix)
 
             if cfg.ne_option == "1"
@@ -534,17 +562,23 @@ function _run_moose_processing(cfg::RunConfig; quiet::Bool = false, persisted_co
                 ProcessSynchrotron(simu, LOS, cfg.faraday_rotation, cfg.responseSynchrotron, df, cfg.add_noise, cfg.SNR_nu,
                     cfg.kernel_size_synchrotron, zeta, Geff, omegaPAH, XC, nuArray, PhiArray, PixelLength_pc, PixelLength_cm,
                     box_length_pc, DistanceArray, cfg.conversionn, cfg.conversionT, cfg.conversionB;
-                    log_progress = cfg.log_progress, rng = rng, expected_shape = expected_shape, metadata = base_metadata)
+                    log_progress = cfg.log_progress, rng = rng, expected_shape = expected_shape, metadata = base_metadata,
+                    rm_clean_enabled = cfg.rm_clean_enabled, rm_clean_gain = cfg.rm_clean_gain,
+                    rm_clean_niter = cfg.rm_clean_niter, rm_clean_threshold = cfg.rm_clean_threshold)
             elseif cfg.ne_option == "2"
                 ProcessSynchrotron(simu, LOS, cfg.faraday_rotation, cfg.responseSynchrotron, df, cfg.add_noise, cfg.SNR_nu,
                     cfg.kernel_size_synchrotron, ion_fraction, nuArray, PhiArray, PixelLength_pc, PixelLength_cm,
                     box_length_pc, DistanceArray, cfg.conversionn, cfg.conversionT, cfg.conversionB;
-                    log_progress = cfg.log_progress, rng = rng, expected_shape = expected_shape, metadata = base_metadata)
+                    log_progress = cfg.log_progress, rng = rng, expected_shape = expected_shape, metadata = base_metadata,
+                    rm_clean_enabled = cfg.rm_clean_enabled, rm_clean_gain = cfg.rm_clean_gain,
+                    rm_clean_niter = cfg.rm_clean_niter, rm_clean_threshold = cfg.rm_clean_threshold)
             else
                 ProcessSynchrotron(simu, LOS, cfg.faraday_rotation, cfg.responseSynchrotron, df, cfg.add_noise, cfg.SNR_nu,
                     cfg.kernel_size_synchrotron, nuArray, PhiArray, PixelLength_pc, PixelLength_cm,
                     box_length_pc, DistanceArray, cfg.conversionn, cfg.conversionT, cfg.conversionB;
-                    log_progress = cfg.log_progress, rng = rng, expected_shape = expected_shape, metadata = base_metadata)
+                    log_progress = cfg.log_progress, rng = rng, expected_shape = expected_shape, metadata = base_metadata,
+                    rm_clean_enabled = cfg.rm_clean_enabled, rm_clean_gain = cfg.rm_clean_gain,
+                    rm_clean_niter = cfg.rm_clean_niter, rm_clean_threshold = cfg.rm_clean_threshold)
             end
         end
 
@@ -562,7 +596,7 @@ function _run_moose_processing(cfg::RunConfig; quiet::Bool = false, persisted_co
     write_config_file && save_config(config_to_save, cfg.config_path)
     write_summary_log(cfg.base_dir, map(basename, cfg.simulations), cfg.chosen_LOS, elapsed; config_path=cfg.config_path,
         config_source_path=source_config_path, config_saved_path=saved_config_path, config_hash=config_hash,
-        faraday=cfg.faraday_rotation, responseSynchrotron=cfg.responseSynchrotron, add_noise=cfg.add_noise,
+        faraday=cfg.faraday_rotation, rm_clean=cfg.rm_clean_enabled, responseSynchrotron=cfg.responseSynchrotron, add_noise=cfg.add_noise,
         interpolation_file_path=cfg.interpolation_file_path, conversionB=cfg.conversionB, conversionn=cfg.conversionn,
         conversionT=cfg.conversionT, ne_option=cfg.ne_option, rng_seed=cfg.rng_seed)
 end
@@ -571,7 +605,7 @@ end
 function run_moose(; quiet::Bool = false, reset_config::Bool = true, help::Bool = false)
    if help
        println("""
-MOOSE v1.0 — Mock Observation Of Synchrotron Emission
+MOOSE v$(moose_version()) — Mock Observation Of Synchrotron Emission
 
 Usage:
  run_moose(; quiet=false, reset_config=true, help=false)
@@ -740,6 +774,39 @@ function run_moose_interactive(; quiet::Bool = false, reset_config::Bool = true)
     config["phimax"] = phimax
     config["dphi"] = dphi
 
+    rm_clean_cfg = get(config, "rm_clean", Dict{String, Any}())
+    rm_clean_default_enabled = if rm_clean_cfg isa AbstractDict
+        get(rm_clean_cfg, "enabled", false)
+    else
+        get(config, "do_rm_clean", false)
+    end
+    rm_clean_default_flag = rm_clean_default_enabled isa Bool ?
+        (rm_clean_default_enabled ? "Y" : "N") :
+        (uppercase(strip(String(rm_clean_default_enabled))) in ("Y", "YES", "TRUE", "1") ? "Y" : "N")
+
+    rm_clean_enabled = false
+    rm_clean_gain = Float64(rm_clean_cfg isa AbstractDict ? get(rm_clean_cfg, "gain", get(config, "rm_clean_gain", 0.1)) : get(config, "rm_clean_gain", 0.1))
+    rm_clean_niter = Int(rm_clean_cfg isa AbstractDict ? get(rm_clean_cfg, "niter", get(config, "rm_clean_niter", 1000)) : get(config, "rm_clean_niter", 1000))
+    rm_clean_threshold = Float64(rm_clean_cfg isa AbstractDict ? get(rm_clean_cfg, "threshold", get(config, "rm_clean_threshold", 0.0)) : get(config, "rm_clean_threshold", 0.0))
+
+    if faraday_flag == "Y"
+        rm_clean_choice = ask_user("Do you want to run RM-CLEAN on the Faraday dispersion function? (Y/N)", rm_clean_default_flag;
+            validate = is_yes_no, error_message = "Please answer Y or N.")
+        rm_clean_enabled = uppercase(rm_clean_choice) == "Y"
+        if rm_clean_enabled
+            rm_clean_gain = ask_user("RM-CLEAN loop gain (0 < gain <= 1)", rm_clean_gain)
+            rm_clean_niter = ask_user("RM-CLEAN maximum number of iterations", rm_clean_niter)
+            rm_clean_threshold = ask_user("RM-CLEAN absolute stopping threshold", rm_clean_threshold)
+        end
+    end
+    config["rm_clean"] = Dict(
+        "enabled" => rm_clean_enabled,
+        "gain" => rm_clean_gain,
+        "niter" => rm_clean_niter,
+        "threshold" => rm_clean_threshold,
+    )
+    config["do_rm_clean"] = rm_clean_enabled
+
     responseSynchrotron = ask_user("Do you want to perform interferometric Fourier filtering for Synchrotron data? (Y/N)", get(config, "responseSynchrotron", "N");
         validate = is_yes_no, error_message = "Please answer Y or N.")
     kernel_size_synchrotron = uppercase(responseSynchrotron) == "Y" ? ask_user("Largest Fourier scale to keep for Synchrotron filtering (in pixels, e.g. 154)", get(config, "kernel_size_synchrotron", 154.0)) : nothing
@@ -893,7 +960,11 @@ function run_moose_interactive(; quiet::Bool = false, reset_config::Bool = true)
         BoxLength_pix,
         config_path,
         get(config, "log_progress", true),
-        rng_seed,
+        rng_seed;
+        rm_clean_enabled = rm_clean_enabled,
+        rm_clean_gain = rm_clean_gain,
+        rm_clean_niter = rm_clean_niter,
+        rm_clean_threshold = rm_clean_threshold,
     )
 
     return cfg, config

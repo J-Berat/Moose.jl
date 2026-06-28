@@ -57,6 +57,10 @@ const DictHeader = Dict(
     "FDF" => header_params(naxis=3, ctype3="FAR-DEPTH", cunit3="rad/m^2", bunit="K"),
     "realFDF" => header_params(naxis=3, ctype3="FAR-DEPTH", cunit3="rad/m^2", bunit="K"),
     "imagFDF" => header_params(naxis=3, ctype3="FAR-DEPTH", cunit3="rad/m^2", bunit="K"),
+    "cleanFDF" => header_params(naxis=3, ctype3="FAR-DEPTH", cunit3="rad/m^2", bunit="K"),
+    "realCleanFDF" => header_params(naxis=3, ctype3="FAR-DEPTH", cunit3="rad/m^2", bunit="K"),
+    "imagCleanFDF" => header_params(naxis=3, ctype3="FAR-DEPTH", cunit3="rad/m^2", bunit="K"),
+    "residualFDF" => header_params(naxis=3, ctype3="FAR-DEPTH", cunit3="rad/m^2", bunit="K"),
     "M0_Faraday" => header_params(naxis=2, bunit="K.rad/m^2"),
     "M1_Faraday" => header_params(naxis=2, bunit="rad/m^2"),
     "M2_Faraday" => header_params(naxis=2, bunit="rad/m^2"),
@@ -66,4 +70,4 @@ const DictHeader = Dict(
 )
 #ListDataName = ["T_nu", "Qnu", "Unu", "TbHI", "tauHI", "TbthinHI", "TbCNM", "tauCNM", "TbthinCNM", "TbWNM", "tauWNM", "TbthinWNM", "ne",  "NHI", "NCNM", "NLNM", "NWNM", "intne", "intBLOS", "Pmax", "Pnumax", "RMmap", "FDF", "realFDF", "imagFDF"]
 
-ListDataName = ["Qnu", "Unu", "ne", "intne", "intBLOS","Pnu", "Pmax", "Pnumax", "RMmap", "FDF", "realFDF", "imagFDF"]
+ListDataName = ["Qnu", "Unu", "ne", "intne", "intBLOS","Pnu", "Pmax", "Pnumax", "RMmap", "FDF", "realFDF", "imagFDF", "cleanFDF", "realCleanFDF", "imagCleanFDF", "residualFDF"]
