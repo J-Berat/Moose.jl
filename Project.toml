@@ -1,6 +1,6 @@
-name = "MOOSE"
+name = "Moose"
 uuid = "7f5f1d03-1815-4f27-9af3-e39b23619c26"
-authors = ["MOOSE Contributors"]
+authors = ["Moose Contributors"]
 version = "0.1.0"
 
 [deps]

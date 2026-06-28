@@ -2,7 +2,7 @@
 
 julia_version = "1.12.6"
 manifest_format = "2.0"
-project_hash = "436c4ac97ceb317e77aae5320210c6ab53da0abd"
+project_hash = "0f155186bb5bc919bfeaa81ebbf9acd47c247d3d"
 
 [[deps.AbstractFFTs]]
 deps = ["LinearAlgebra"]
@@ -1171,7 +1171,7 @@ git-tree-sha1 = "282cadc186e7b2ae0eeadbd7a4dffed4196ae2aa"
 uuid = "856f044c-d86e-5d09-b602-aeab76dc8ba7"
 version = "2025.2.0+0"
 
-[[deps.MOOSE]]
+[[deps.Moose]]
 deps = ["CSV", "CairoMakie", "Crayons", "DataFrames", "Dates", "Dierckx", "Distributions", "FFTW", "FITSIO", "Healpix", "ImageFiltering", "Images", "Interpolations", "JSON", "KernelDensity", "LinearAlgebra", "Logging", "QuadGK", "Random", "SHA", "SpecialFunctions", "Statistics", "StatsBase", "StringEncodings", "TOML"]
 path = "."
 uuid = "7f5f1d03-1815-4f27-9af3-e39b23619c26"

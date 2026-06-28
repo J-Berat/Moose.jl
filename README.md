@@ -1,6 +1,6 @@
-# MOOSE
+# Moose
 
-**Mock Observation Of Synchrotron Emission** is an interactive Julia toolkit for processing mock synchrotron emission from MHD simulations. It guides you through selecting simulations, configuring physical units, and running processing pipelines that compute Stokes parameters, rotation measures, and Faraday dispersion functions. The goal is to make it straightforward to turn raw simulation cubes into reproducible FITS products that mirror common radio-observational analyses.
+**Moose** (*Mock Observation Of Synchrotron Emission*) is an interactive Julia toolkit for processing mock synchrotron emission from MHD simulations. It guides you through selecting simulations, configuring physical units, and running processing pipelines that compute Stokes parameters, rotation measures, and Faraday dispersion functions. The goal is to make it straightforward to turn raw simulation cubes into reproducible FITS products that mirror common radio-observational analyses.
 
 ---
 
@@ -34,8 +34,8 @@
 
 ## Project layout
 Key source files live under `src/`:
-- `MOOSE.jl`: module entrypoint that includes all domain-specific components and re-exports the main run helpers.
-- `SyntheticObservations/MOOSE.jl`: interactive entrypoint that orchestrates the full workflow.
+- `Moose.jl`: module entrypoint that includes all domain-specific components and re-exports the main run helpers.
+- `SyntheticObservations/Moose.jl`: interactive entrypoint that orchestrates the full workflow.
 - `FileIO/ReadSimulation.jl`: helpers for loading simulation cubes and metadata.
 - `Synchrotron/ProcessSynchrotron.jl`: computations for Stokes parameters and emissivity interpolation.
 - `Faraday/RMSynthesis.jl`: utilities for RM synthesis and Faraday depth handling.
@@ -47,7 +47,7 @@ Key source files live under `src/`:
 If you already have Julia 1.10+ installed, the fastest way to confirm the tool works is:
 
 ```bash
-julia --startup-file=no --project -e 'using Pkg; Pkg.instantiate(); using MOOSE; run_moose(help=true)'
+julia --startup-file=no --project -e 'using Pkg; Pkg.instantiate(); using Moose; run_moose(help=true)'
 ```
 
 This installs dependencies, precompiles the package, and prints the interactive help without requiring any input data. Once that succeeds, move on to preparing your simulation directory and running the standard workflow in [Usage](#usage).
@@ -109,7 +109,7 @@ docker run --rm \
    ```
 2. Load the interactive tool and launch it:
    ```julia
-   using MOOSE
+   using Moose
    run_moose()
    ```
 3. Follow the prompts to choose simulations, set unit conversions, select lines of sight, and enable options such as Faraday rotation or filtering.
@@ -168,7 +168,7 @@ julia --startup-file=no --project -e 'using Pkg; Pkg.test()'
 ```
 
 ### How to confirm things work
-- **Smoke test the installation:** run `julia --startup-file=no --project -e 'using MOOSE; run_moose(help=true)'`. This precompiles the package and prints the built-in help without needing any data files.
+- **Smoke test the installation:** run `julia --startup-file=no --project -e 'using Moose; run_moose(help=true)'`. This precompiles the package and prints the built-in help without needing any data files.
 - **Interactive end-to-end run:** follow the standard `run_moose()` workflow described above with a real simulation directory. Success is indicated by FITS outputs next to your simulation files and a `MOOSE_summary.log` entry summarizing the run.
 - **Config-driven batch run:** prepare a JSON config (for example by saving answers from a previous interactive session) and run `julia --project src/MOOSE_cli.jl /path/to/config.json --quiet`. This reuses stored parameters and will append to `MOOSE_summary.log` on completion. Pass `--write-back` only when you want CLI overrides persisted into that config file.
 - **Use the provided template:** copy `config/default_config.json`, update paths/constants (`base_dir`, `simulations`, conversion factors, frequencies, Faraday/noise/filter flags), then run it with the CLI. The config loader now validates required fields and fails fast with explicit errors if a value is invalid.
@@ -176,7 +176,7 @@ julia --startup-file=no --project -e 'using Pkg; Pkg.test()'
 ---
 
 ## Public API
-The stable Julia API is the set of names exported by `using MOOSE`:
+The stable Julia API is the set of names exported by `using Moose`:
 
 - `run_moose` for the interactive workflow.
 - `MOOSE_from_config` for JSON-driven batch runs.
@@ -184,7 +184,7 @@ The stable Julia API is the set of names exported by `using MOOSE`:
 - Faraday tomography: `RMClean`, `RMCleanHealpix`, `RMCleanAuto`, `RMCleanResult`, `rmsf_diagnostics`, `RMSFDiagnostics`, and `write_rmsf`.
 - HEALPix helpers: `HealpixStack`, `HealpixRMResult`, `RMSynthesisHealpix`, `RMSynthesisAuto`, `healpix_map`, `healpix_maps_from_stack`, `detect_fits_grid`, `is_healpix_fits`, `is_image_fits`, `read_fits_grid`, `read_fits_grid_stack`, `read_healpix_map`, `read_healpix_stack`, `write_healpix_map`, `write_healpix_stack`, and `write_healpix_rm_result`.
 
-Other qualified names such as `MOOSE.RMS`, `MOOSE.Pnu`, or `MOOSE.buildHeader3D` are internal implementation details. They are tested for regression coverage, but they are not yet promised as stable external API.
+Other qualified names such as `Moose.RMS`, `Moose.Pnu`, or `Moose.buildHeader3D` are internal implementation details. They are tested for regression coverage, but they are not yet promised as stable external API.
 
 ---
 
@@ -199,7 +199,7 @@ Other qualified names such as `MOOSE.RMS`, `MOOSE.Pnu`, or `MOOSE.buildHeader3D`
 ### User pre-run checklist
 1. Run a quick pre-check before a full run:
    ```bash
-   julia --startup-file=no --project -e 'using MOOSE; run_moose(help=true)'
+   julia --startup-file=no --project -e 'using Moose; run_moose(help=true)'
    ```
 2. Keep config files read-only by default: pass a config JSON without `--write-back`, and only use `--write-back` when you explicitly want to persist CLI overrides.
 3. Validate command composition before execution (Python wrapper):
@@ -266,7 +266,7 @@ mv n.fits density.fits
 MOOSE also exposes helpers for HEALPix maps through [Healpix.jl](https://github.com/JuliaAstro/Healpix.jl). This is useful when Q/U observations or mock products are already stored as one HEALPix FITS map per frequency:
 
 ```julia
-using MOOSE
+using Moose
 
 q = read_healpix_stack(q_files)  # Npix x Nfreq
 u = read_healpix_stack(u_files)
@@ -324,7 +324,7 @@ RM synthesis returns a *dirty* Faraday dispersion function (FDF): the true Farad
 `RMClean` runs RM synthesis and then deconvolves the FDF with an RM-CLEAN loop (Heald 2009), restoring the clean components with a Gaussian beam matched to the RMSF main lobe:
 
 ```julia
-using MOOSE
+using Moose
 
 # Q, U with frequency as the last axis (1D/2D/3D); frequencies in Hz.
 result = RMClean(Q, U, nu_hz, phi; gain=0.1, niter=2000, threshold=1e-3)
@@ -374,12 +374,12 @@ When enabled, the pipeline writes `cleanFDF.fits`, `realCleanFDF.fits`, `imagCle
 ---
 
 ## License
-MOOSE is distributed under the MIT License. See [LICENSE](LICENSE).
+Moose is distributed under the MIT License. See [LICENSE](LICENSE).
 
 ---
 
 ## Citation
-If you use MOOSE, please cite the associated paper: [2026A&A...708A.245B](https://ui.adsabs.harvard.edu/abs/2026A%26A...708A.245B/abstract).
+If you use Moose/MOOSE, please cite the associated paper: [2026A&A...708A.245B](https://ui.adsabs.harvard.edu/abs/2026A%26A...708A.245B/abstract).
 
 ---
 

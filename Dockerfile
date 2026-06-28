@@ -41,7 +41,7 @@ COPY python ./python
 COPY src ./src
 COPY test ./test
 
-RUN julia --startup-file=no --project=/app -e 'using Pkg; Pkg.precompile(); using MOOSE'
+RUN julia --startup-file=no --project=/app -e 'using Pkg; Pkg.precompile(); using Moose'
 
 RUN mkdir -p /data
 
@@ -49,4 +49,4 @@ VOLUME ["/data"]
 
 ENTRYPOINT ["tini", "--"]
 
-CMD ["julia", "--startup-file=no", "--project=/app", "-e", "using MOOSE; run_moose(help=true)"]
+CMD ["julia", "--startup-file=no", "--project=/app", "-e", "using Moose; run_moose(help=true)"]

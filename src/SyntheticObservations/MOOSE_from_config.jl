@@ -1,4 +1,4 @@
-module MOOSEFromConfig
+module MooseFromConfig
 
 using CSV
 using Crayons
@@ -6,7 +6,7 @@ using DataFrames
 using Dates
 using JSON
 
-using ..MOOSE: PARSEC_TO_CM, RunConfig, ValidationResult, ensure_directory_access,
+using ..Moose: PARSEC_TO_CM, RunConfig, ValidationResult, ensure_directory_access,
                ensure_readable_file, normalize_los_float_values, normalize_los_int_values,
                normalize_rng_seed, run_moose_processing, throw_config_error,
                validate_los_float_values, validate_los_int_values,

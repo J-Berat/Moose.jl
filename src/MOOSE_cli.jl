@@ -1,6 +1,6 @@
 using JSON
-using MOOSE: MooseError, cli_error, throw_cli_error
-using MOOSE.MOOSEFromConfig: MOOSE_from_config_dict
+using Moose: MooseError, cli_error, throw_cli_error
+using Moose.MooseFromConfig: MOOSE_from_config_dict
 
 function parse_numeric(name, value)
     parsed = tryparse(Float64, value)
@@ -178,7 +178,7 @@ function run_with_config(config_path, quiet, write_back, overrides)
     cfg = merge(load_base_config(config_path), overrides)
 
     if write_back
-        MOOSE.save_config(cfg, config_path)
+        Moose.save_config(cfg, config_path)
         MOOSE_from_config_dict(
             cfg;
             config_path = config_path,
