@@ -29,7 +29,11 @@ RUN apt-get update \
 
 COPY Project.toml Manifest.toml ./
 
-RUN julia --startup-file=no --project=/app -e 'using Pkg; Pkg.instantiate()'
+RUN for attempt in 1 2 3; do \
+        julia --startup-file=no --project=/app -e 'using Pkg; Pkg.instantiate()' && break; \
+        if [ "$attempt" = "3" ]; then exit 1; fi; \
+        sleep 10; \
+    done
 
 COPY README.md Version.toml setup.jl ./
 COPY config ./config
