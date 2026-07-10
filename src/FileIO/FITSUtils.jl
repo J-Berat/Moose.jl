@@ -47,8 +47,13 @@ function read_FITS_file(file; expected_ndims=nothing, allow_nonfinite::Bool=fals
     return data
 end
 
-read_file(file, conversion; expected_ndims=nothing, allow_nonfinite::Bool=false) =
-    read_FITS_file(file; expected_ndims=expected_ndims, allow_nonfinite=allow_nonfinite) .* conversion
+function read_file(file::AbstractString, conversion; expected_ndims=nothing, allow_nonfinite::Bool=false)
+    if isdefined(@__MODULE__, :is_hdf5_path) && is_hdf5_path(file)
+        return read_HDF5_file(file; expected_ndims=expected_ndims, allow_nonfinite=allow_nonfinite) .* conversion
+    end
+
+    return read_FITS_file(file; expected_ndims=expected_ndims, allow_nonfinite=allow_nonfinite) .* conversion
+end
 
 function permute_dims(array, LOS)
     if LOS == "x"

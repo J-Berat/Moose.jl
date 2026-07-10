@@ -344,6 +344,25 @@ function build_config(cfg, config_path)
 
     rng_seed = normalize_rng_seed(get(cfg, "rng_seed", nothing))
 
+    precision = lowercase(string(get(cfg, "precision", "float64")))
+    precision in ("float64", "float32") ||
+        throw_config_error("`precision` must be \"float64\" or \"float32\". Got: $(precision)"; code=:invalid_precision)
+
+    tile_size = get(cfg, "tile_size", nothing)
+    if tile_size !== nothing
+        tile_size = validate_nonnegative_int(tile_size, "tile_size")
+        tile_size > 0 || throw_config_error("`tile_size` must be a positive integer. Got: $(tile_size)"; code=:invalid_tile_size)
+        responseSynchrotron == "Y" && throw_config_error(
+            "`tile_size` is incompatible with `responseSynchrotron = Y`: the interferometric Fourier mask needs the full sky plane. Disable filtering or remove `tile_size`.";
+            code=:invalid_tile_size)
+        add_noise == "Y" && throw_config_error(
+            "`tile_size` is incompatible with `add_noise = Y`: the per-channel noise level is derived from the full-map rms. Disable noise or remove `tile_size`.";
+            code=:invalid_tile_size)
+        rm_clean_enabled && throw_config_error(
+            "`tile_size` does not support RM-CLEAN yet. Disable `rm_clean` or remove `tile_size`.";
+            code=:invalid_tile_size)
+    end
+
     return RunConfig(
         base_dir,
         simu_paths,
@@ -375,6 +394,8 @@ function build_config(cfg, config_path)
         rm_clean_gain = rm_clean_gain,
         rm_clean_niter = rm_clean_niter,
         rm_clean_threshold = rm_clean_threshold,
+        precision = precision,
+        tile_size = tile_size,
     ), simu_paths
 end
 

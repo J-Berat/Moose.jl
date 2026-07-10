@@ -158,9 +158,27 @@ function rmclean(realFDF::AbstractArray, imagFDF::AbstractArray, PhiArray::Abstr
     residualMat = Matrix{ComplexF64}(undef, npix, nPhi)
 
     spectrum = Vector{ComplexF64}(undef, nPhi)
+    nan_spectrum = ComplexF64(NaN, NaN)
     for p in 1:npix
+        # Masked pixels (NaN FDF from HEALPix UNSEEN or partial-sky maps):
+        # skip the clean loop and propagate NaN.
+        masked = false
         @inbounds for k in 1:nPhi
-            spectrum[k] = ComplexF64(realMat[p, k], imagMat[p, k])
+            re, im_ = realMat[p, k], imagMat[p, k]
+            if !(isfinite(re) && isfinite(im_))
+                masked = true
+                break
+            end
+            spectrum[k] = ComplexF64(re, im_)
+        end
+        if masked
+            @inbounds for k in 1:nPhi
+                restoredMat[p, k] = nan_spectrum
+                modelMat[p, k] = nan_spectrum
+                residualMat[p, k] = nan_spectrum
+            end
+            log_progress && print_progress(p, npix)
+            continue
         end
         restored, model, residual, _ = rmclean_1d(spectrum, diag.rmsf, rmsf_center, dphi, diag.fwhm;
                                                   gain = gain, threshold = threshold, niter = niter)
@@ -296,8 +314,7 @@ function RMCleanHealpix(Q, U, nuArray::AbstractArray, PhiArray::AbstractArray;
     q_stack = _healpix_stack_from_input(Q; nside = nside, order = order)
     u_stack = _healpix_stack_from_input(U; nside = q_stack.nside, order = q_stack.order)
 
-    size(q_stack.pixels) == size(u_stack.pixels) ||
-        error("Q and U HEALPix stacks must have the same Npix x Nfreq shape.")
+    _check_healpix_stack_consistency(q_stack, u_stack)
     length(nuArray) == size(q_stack.pixels, 2) ||
         error("nuArray length ($(length(nuArray))) must match the number of HEALPix frequency maps ($(size(q_stack.pixels, 2))).")
 
@@ -306,12 +323,13 @@ function RMCleanHealpix(Q, U, nuArray::AbstractArray, PhiArray::AbstractArray;
                      diagnostics = diagnostics, log_progress = log_progress)
 
     return HealpixRMResult(
-        Matrix(result.cleanFDF),
-        Matrix(result.realCleanFDF),
-        Matrix(result.imagCleanFDF),
+        _as_matrix(result.cleanFDF),
+        _as_matrix(result.realCleanFDF),
+        _as_matrix(result.imagCleanFDF),
         Float64.(collect(PhiArray)),
         q_stack.nside,
         q_stack.order,
+        q_stack.coordsys,
     )
 end
 

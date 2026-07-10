@@ -21,7 +21,7 @@ size_cube = (100, 100, 100)  # Size of the 3D array
 electron_density = constant_ne(constant_value, size_cube)
 println(electron_density)
 """
-constant_ne(constant::Float64, SizeCube::Tuple{Int, Int, Int}) = zeros(SizeCube) .+ constant
+constant_ne(constant::Float64, SizeCube::Tuple{Int, Int, Int}) = fill(constant, SizeCube)
 
 """
     ne_propto_nH(n::AbstractArray, IonizationFraction::Float64) -> AbstractArray
@@ -133,9 +133,10 @@ PixelLength_pc = 0.1  # Example pixel length in parsecs
 dm_3d = DM(ne_3d, PixelLength_pc)
 println("3D DM: ", dm_3d)
 """
-DM(ne::Vector{T} where T, PixelLength_pc) = sum(ne .* PixelLength_pc) 
+DM(ne::AbstractVector, PixelLength_pc) = sum(x -> x * PixelLength_pc, ne)
 
-DM(ne::Array{T, 3} where T, PixelLength_pc) = dropdims(sum(ne .* PixelLength_pc, dims=3),dims=3)
+DM(ne::AbstractArray{<:Real, 3}, PixelLength_pc) =
+    dropdims(sum(x -> x * PixelLength_pc, ne; dims=3), dims=3)
 
 """
     EM(ne::Vector{T}, PixelLength_pc::Float64) -> Float64
@@ -174,9 +175,10 @@ ne_3d = rand(100, 100, 100)  # Example 3D electron density data
 em_3d = EM(ne_3d, PixelLength_pc)
 println("3D EM: ", em_3d)
 """
-EM(ne::Vector{T} where T,PixelLength_pc) = sum(ne .^ 2 .* PixelLength_pc)
+EM(ne::AbstractVector, PixelLength_pc) = sum(x -> abs2(x) * PixelLength_pc, ne)
 
-EM(ne::Array{T,3} where T, PixelLength_pc) = dropdims(sum(ne .^ 2 .* PixelLength_pc, dims=3),dims=3)
+EM(ne::AbstractArray{<:Real, 3}, PixelLength_pc) =
+    dropdims(sum(x -> abs2(x) * PixelLength_pc, ne; dims=3), dims=3)
 
 """
     WolfireConstants() -> Tuple{Float64, Float64, Float64, Float64}

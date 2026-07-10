@@ -340,6 +340,8 @@ struct RunConfig
     config_path::String
     log_progress::Bool
     rng_seed::Union{Nothing, Int}
+    precision::String
+    tile_size::Union{Nothing, Int}
 
     function RunConfig(
         base_dir,
@@ -373,7 +375,16 @@ struct RunConfig
         rm_clean_gain=0.1,
         rm_clean_niter=1000,
         rm_clean_threshold=0.0,
+        precision="float64",
+        tile_size=nothing,
     )
+        precision_flag = lowercase(String(precision))
+        precision_flag in ("float64", "float32") ||
+            error("`precision` must be \"float64\" or \"float32\". Got: $(precision)")
+        tile_size = tile_size === nothing ? nothing : Int(tile_size)
+        tile_size === nothing || tile_size > 0 ||
+            error("`tile_size` must be a positive integer. Got: $(tile_size)")
+
         faraday_flag = uppercase(faraday_rotation)
         response_flag = uppercase(responseSynchrotron)
         noise_flag = uppercase(add_noise)
@@ -421,6 +432,8 @@ struct RunConfig
             String(config_path),
             Bool(log_progress),
             normalize_rng_seed(rng_seed),
+            precision_flag,
+            tile_size,
         )
     end
 end
@@ -469,6 +482,8 @@ function config_dict_from_struct(cfg::RunConfig)
         "config_path" => cfg.config_path,
         "log_progress" => cfg.log_progress,
         "rng_seed" => cfg.rng_seed,
+        "precision" => cfg.precision,
+        "tile_size" => cfg.tile_size,
     )
 end
 
@@ -489,6 +504,7 @@ function _run_moose_processing(cfg::RunConfig; quiet::Bool = false, persisted_co
     PhiArray = cfg.faraday_rotation == "Y" ? range(start = cfg.phimin, stop = cfg.phimax, step = cfg.dphi) : nothing
     PixelLength_pc, PixelLength_cm, DistanceArray = los_pixel_scale(cfg.BoxLength_pc.x, cfg.BoxLength_pix.x)
     rng = cfg.rng_seed === nothing ? Random.default_rng() : Random.MersenneTwister(cfg.rng_seed)
+    float_type = cfg.precision == "float32" ? Float32 : Float64
 
     isfile(cfg.interpolation_file_path) ||
         throw_config_error("The interpolation file $(cfg.interpolation_file_path) was not found."; code=:missing_interpolation_file)
@@ -529,6 +545,8 @@ function _run_moose_processing(cfg::RunConfig; quiet::Bool = false, persisted_co
         "CONVT" => cfg.conversionT,
         "NEOPT" => cfg.ne_option,
         "INTFILE" => cfg.interpolation_file_path,
+        "PRECIS" => cfg.precision,
+        "TILESIZE" => cfg.tile_size,
     )
     if cfg.ne_option == "3"
         missing_cubes = [simu for simu in cfg.simulations if !isfile(joinpath(simu, "densityHp.fits"))]
@@ -564,21 +582,24 @@ function _run_moose_processing(cfg::RunConfig; quiet::Bool = false, persisted_co
                     box_length_pc, DistanceArray, cfg.conversionn, cfg.conversionT, cfg.conversionB;
                     log_progress = cfg.log_progress, rng = rng, expected_shape = expected_shape, metadata = base_metadata,
                     rm_clean_enabled = cfg.rm_clean_enabled, rm_clean_gain = cfg.rm_clean_gain,
-                    rm_clean_niter = cfg.rm_clean_niter, rm_clean_threshold = cfg.rm_clean_threshold)
+                    rm_clean_niter = cfg.rm_clean_niter, rm_clean_threshold = cfg.rm_clean_threshold,
+                    float_type = float_type, tile_rows = cfg.tile_size)
             elseif cfg.ne_option == "2"
                 ProcessSynchrotron(simu, LOS, cfg.faraday_rotation, cfg.responseSynchrotron, df, cfg.add_noise, cfg.SNR_nu,
                     cfg.kernel_size_synchrotron, ion_fraction, nuArray, PhiArray, PixelLength_pc, PixelLength_cm,
                     box_length_pc, DistanceArray, cfg.conversionn, cfg.conversionT, cfg.conversionB;
                     log_progress = cfg.log_progress, rng = rng, expected_shape = expected_shape, metadata = base_metadata,
                     rm_clean_enabled = cfg.rm_clean_enabled, rm_clean_gain = cfg.rm_clean_gain,
-                    rm_clean_niter = cfg.rm_clean_niter, rm_clean_threshold = cfg.rm_clean_threshold)
+                    rm_clean_niter = cfg.rm_clean_niter, rm_clean_threshold = cfg.rm_clean_threshold,
+                    float_type = float_type, tile_rows = cfg.tile_size)
             else
                 ProcessSynchrotron(simu, LOS, cfg.faraday_rotation, cfg.responseSynchrotron, df, cfg.add_noise, cfg.SNR_nu,
                     cfg.kernel_size_synchrotron, nuArray, PhiArray, PixelLength_pc, PixelLength_cm,
                     box_length_pc, DistanceArray, cfg.conversionn, cfg.conversionT, cfg.conversionB;
                     log_progress = cfg.log_progress, rng = rng, expected_shape = expected_shape, metadata = base_metadata,
                     rm_clean_enabled = cfg.rm_clean_enabled, rm_clean_gain = cfg.rm_clean_gain,
-                    rm_clean_niter = cfg.rm_clean_niter, rm_clean_threshold = cfg.rm_clean_threshold)
+                    rm_clean_niter = cfg.rm_clean_niter, rm_clean_threshold = cfg.rm_clean_threshold,
+                    float_type = float_type, tile_rows = cfg.tile_size)
             end
         end
 

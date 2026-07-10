@@ -143,6 +143,18 @@ function parse_cli_args(args)
             i += 1
             i > length(args) && throw_cli_error("--XC expects a value")
             overrides["XC"] = parse_numeric("--XC", args[i])
+        elseif arg == "--precision"
+            i += 1
+            i > length(args) && throw_cli_error("--precision expects float64 or float32")
+            precision_value = lowercase(strip(args[i]))
+            precision_value in ("float64", "float32") || throw_cli_error("--precision expects float64 or float32, got '$(args[i])'.")
+            overrides["precision"] = precision_value
+        elseif arg == "--tile-size"
+            i += 1
+            i > length(args) && throw_cli_error("--tile-size expects a positive integer")
+            tile_value = parse_integer("--tile-size", args[i])
+            tile_value > 0 || throw_cli_error("--tile-size expects a positive integer, got '$(args[i])'.")
+            overrides["tile_size"] = tile_value
         elseif arg == "--quiet"
             quiet = true
         elseif arg == "--write-back"

@@ -102,6 +102,24 @@ end
     end
 end
 
+@inline function linear_interp_extrapolated(xgrid::Vector{Float64}, ygrid::AbstractMatrix{Float64}, col::Int, x::Float64)
+    n = length(xgrid)
+    @inbounds if x <= xgrid[1]
+        x1, x2 = xgrid[1], xgrid[2]
+        y1, y2 = ygrid[1, col], ygrid[2, col]
+        return y1 + (x - x1) * (y2 - y1) / (x2 - x1)
+    elseif x >= xgrid[n]
+        x1, x2 = xgrid[n - 1], xgrid[n]
+        y1, y2 = ygrid[n - 1, col], ygrid[n, col]
+        return y1 + (x - x1) * (y2 - y1) / (x2 - x1)
+    else
+        idx = searchsortedlast(xgrid, x)
+        x1, x2 = xgrid[idx], xgrid[idx + 1]
+        y1, y2 = ygrid[idx, col], ygrid[idx + 1, col]
+        return y1 + (x - x1) * (y2 - y1) / (x2 - x1)
+    end
+end
+
 function emissivity_at_frequency!(buffer, B::Vector{Float64}, eps_interp::Spline2D, Bperp::AbstractArray, nui;
     eps_cache_col=nothing, eps_line_buffer=nothing)
     eps_i = eps_cache_col
@@ -119,21 +137,24 @@ end
 
 function _QUnu!(Qnu, Unu, Bperp, psi_src, RM, nuArray, PixelLength_cm, interpolator; emissivity_cache=nothing)
     Nfreq = length(nuArray)
-    eps_buffer = similar(Bperp, Float64)
     eps_line_buffer = emissivity_cache === nothing ? similar(interpolator.B, Float64) : nothing
 
     for i in 1:Nfreq
         nui = nuArray[i]
-        cache_col = emissivity_cache === nothing ? nothing : view(emissivity_cache, :, i)
-        emissivity_at_frequency!(eps_buffer, interpolator.B, interpolator.eps_interp, Bperp, nui;
-            eps_cache_col=cache_col, eps_line_buffer=eps_line_buffer)
+        if emissivity_cache === nothing
+            @inbounds for j in eachindex(interpolator.B)
+                eps_line_buffer[j] = interpolator.eps_interp(interpolator.B[j], nui)
+            end
+        end
 
         faraday_factor = (C_m / (nui * 1e6))^2
         sum_u = 0.0
         sum_q = 0.0
-        @inbounds for idx in eachindex(eps_buffer, psi_src, RM)
+        @inbounds for idx in eachindex(Bperp, psi_src, RM)
             arg = 2.0 * (psi_src[idx] + RM[idx] * faraday_factor)
-            eps_val = eps_buffer[idx]
+            eps_val = emissivity_cache === nothing ?
+                linear_interp_extrapolated(interpolator.B, eps_line_buffer, Float64(Bperp[idx])) :
+                linear_interp_extrapolated(interpolator.B, emissivity_cache, i, Float64(Bperp[idx]))
             sum_u += eps_val * sin(arg)
             sum_q += eps_val * cos(arg)
         end
@@ -188,8 +209,11 @@ Qnu, Unu = QUnu3D(Bperpcube, psi_src, RM, nuArray, df, PixelLength_cm)
 function QUnu3D(Bperpcube, psi_src, RM, nuArray, df, PixelLength_cm; log_progress::Bool=false)
     Nfreq = length(nuArray)
     nx, ny = size(Bperpcube, 1), size(Bperpcube, 2)
-    Qnu = zeros(nx, ny, Nfreq)
-    Unu = zeros(nx, ny, Nfreq)
+    # Output cubes follow the working precision of the input cube (the
+    # per-pixel accumulation below still runs in Float64 scalars).
+    T = float(eltype(Bperpcube))
+    Qnu = zeros(T, nx, ny, Nfreq)
+    Unu = zeros(T, nx, ny, Nfreq)
     interpolator = EmissivityInterpolator(df)
     emissivity_cache = build_emissivity_frequency_cache(interpolator, nuArray)
     total_pixels = nx * ny
@@ -255,20 +279,23 @@ Qnu, Unu = QUnuNoFaraday(Bperp, psi_src, nuArray, df, PixelLength_cm)
 """
 function _QUnuNoFaraday!(Qnu, Unu, Bperp, psi_src, nuArray, PixelLength_cm, interpolator; emissivity_cache=nothing)
     Nfreq = length(nuArray)
-    eps_buffer = similar(Bperp, Float64)
     eps_line_buffer = emissivity_cache === nothing ? similar(interpolator.B, Float64) : nothing
 
     for i in 1:Nfreq
         nui = nuArray[i]
-        cache_col = emissivity_cache === nothing ? nothing : view(emissivity_cache, :, i)
-        emissivity_at_frequency!(eps_buffer, interpolator.B, interpolator.eps_interp, Bperp, nui;
-            eps_cache_col=cache_col, eps_line_buffer=eps_line_buffer)
+        if emissivity_cache === nothing
+            @inbounds for j in eachindex(interpolator.B)
+                eps_line_buffer[j] = interpolator.eps_interp(interpolator.B[j], nui)
+            end
+        end
 
         sum_u = 0.0
         sum_q = 0.0
-        @inbounds for idx in eachindex(eps_buffer, psi_src)
+        @inbounds for idx in eachindex(Bperp, psi_src)
             arg = 2.0 * psi_src[idx]
-            eps_val = eps_buffer[idx]
+            eps_val = emissivity_cache === nothing ?
+                linear_interp_extrapolated(interpolator.B, eps_line_buffer, Float64(Bperp[idx])) :
+                linear_interp_extrapolated(interpolator.B, emissivity_cache, i, Float64(Bperp[idx]))
             sum_u += eps_val * sin(arg)
             sum_q += eps_val * cos(arg)
         end
@@ -324,8 +351,9 @@ Qnu, Unu = QUnuNoFaraday3D(Bperpcube, psi_src, nuArray, df, PixelLength_cm)
 function QUnuNoFaraday3D(Bperpcube, psi_src, nuArray, df, PixelLength_cm; log_progress::Bool=false)
 
     Nfreq = length(nuArray)
-    Qnu = zeros(size(Bperpcube,1), size(Bperpcube,2), Nfreq)
-    Unu = zeros(size(Bperpcube,1), size(Bperpcube,2), Nfreq)
+    T = float(eltype(Bperpcube))
+    Qnu = zeros(T, size(Bperpcube,1), size(Bperpcube,2), Nfreq)
+    Unu = zeros(T, size(Bperpcube,1), size(Bperpcube,2), Nfreq)
     interpolator = EmissivityInterpolator(df)
     emissivity_cache = build_emissivity_frequency_cache(interpolator, nuArray)
     total_pixels = size(Bperpcube, 1) * size(Bperpcube, 2)

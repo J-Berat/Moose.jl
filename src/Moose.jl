@@ -7,6 +7,7 @@ using CSV
 using DataFrames
 using Distributions
 using FITSIO
+using HDF5
 using Healpix
 using StatsBase
 using Interpolations
@@ -26,6 +27,7 @@ include(joinpath("Utils", "InputValidation.jl"))
 include(joinpath("Utils", "AtomicWrite.jl"))
 
 include(joinpath("FileIO", "FITSUtils.jl"))
+include(joinpath("FileIO", "HDF5Utils.jl"))
 include(joinpath("FileIO", "Header.jl"))
 include(joinpath("FileIO", "ReadSimulation.jl"))
 include(joinpath("FileIO", "WriteDataOnDisk.jl"))
@@ -48,12 +50,14 @@ include(joinpath("Frequencies", "FreqFile.jl"))
 include(joinpath("Synchrotron", "EmissInterp.jl"))
 include(joinpath("Synchrotron", "Pnu.jl"))
 include(joinpath("Synchrotron", "ProcessSynchrotron.jl"))
+include(joinpath("Synchrotron", "TiledProcessing.jl"))
 include(joinpath("Synchrotron", "QUnu.jl"))
 include(joinpath("Synchrotron", "Tnu.jl"))
 
 include(joinpath("Faraday", "FaradayParameters.jl"))
 include(joinpath("Faraday", "RMSynthesis.jl"))
 include(joinpath("Faraday", "RMClean.jl"))
+include(joinpath("Faraday", "QUFitting.jl"))
 
 include(joinpath("Filtering", "Filter.jl"))
 
@@ -62,6 +66,9 @@ include(joinpath("Statistics", "Moments.jl"))
 include(joinpath("Statistics", "RMS.jl"))
 include(joinpath("Statistics", "PowerSpectrum.jl"))
 include(joinpath("Statistics", "PolarizationDiagnostics.jl"))
+include(joinpath("Statistics", "PolarizationGradient.jl"))
+include(joinpath("Statistics", "StructureFunction.jl"))
+include(joinpath("Statistics", "SpectralIndex.jl"))
 include(joinpath("Statistics", "Statistics.jl"))
 
 include(joinpath("SyntheticObservations", "SimulationDiscovery.jl"))
@@ -69,6 +76,7 @@ include(joinpath("SyntheticObservations", "DictHeaderParameters.jl"))
 include(joinpath("SyntheticObservations", "InstrumentalParameters.jl"))
 include(joinpath("SyntheticObservations", "Moose.jl"))
 include(joinpath("SyntheticObservations", "MOOSE_from_config.jl"))
+include(joinpath("SyntheticObservations", "DemoData.jl"))
 
 using .MooseFromConfig: MOOSE_from_config
 
@@ -81,10 +89,15 @@ export run_moose, MOOSE_from_config, MooseError, cli_error, config_error,
        detect_fits_grid, is_healpix_fits, is_image_fits,
        read_fits_grid, read_fits_grid_stack,
        write_healpix_map, write_healpix_stack, write_healpix_rm_result,
+       write_healpix_cube, read_healpix_cube, HEALPIX_UNSEEN,
+       healpix_udgrade, healpix_reorder, healpix_smooth,
        RMSynthesisAuto,
        rmsf_diagnostics, RMSFDiagnostics, write_rmsf,
        RMClean, RMCleanHealpix, RMCleanAuto, RMCleanResult,
-       polarization_diagnostic_spectra, write_polarization_diagnostic_plots
+       QUFit, QUFitCompare, QUFitCube, QUFitResult, qu_model, QU_FIT_MODELS,
+       polarization_diagnostic_spectra, write_polarization_diagnostic_plots,
+       polarization_gradient_map, structure_function, StructureFunctionResult,
+       spectral_index_map, make_demo_data
 
 const MOOSE_PROJECT_ROOT = normpath(joinpath(@__DIR__, ".."))
 

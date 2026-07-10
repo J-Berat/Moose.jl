@@ -74,6 +74,8 @@ function _healpix_stack_matrix(data)
     return reshape(data, size(data, 1), size(data, 3))
 end
 
+_healpix_coordsys(hp_meta) = get(hp_meta, :coordsys, nothing)
+
 function _write_healpix_map_quantity(resultspath, data, DataName::String, hp_meta)
     path = joinpath(resultspath, "$(DataName).fits")
     write_healpix_map(path, _healpix_map_vector(data);
@@ -81,6 +83,7 @@ function _write_healpix_map_quantity(resultspath, data, DataName::String, hp_met
         order = hp_meta.order,
         unit = _healpix_unit(DataName),
         extname = _healpix_extname(DataName),
+        coordsys = _healpix_coordsys(hp_meta),
     )
     return path
 end
@@ -96,33 +99,39 @@ function _write_healpix_stack_quantity(resultspath, data, DataName::String, coor
         order = hp_meta.order,
         unit = _healpix_unit(DataName),
         extname = _healpix_extname(DataName),
+        coordsys = _healpix_coordsys(hp_meta),
     )
 end
 
 function _write_healpix_rmclean_result(resultspath, result, hp_meta)
-    write_healpix_stack(resultspath, Matrix(result.cleanFDF), "cleanFDF", result.phi;
+    coordsys = _healpix_coordsys(hp_meta)
+    write_healpix_stack(resultspath, result.cleanFDF, "cleanFDF", result.phi;
         nside = hp_meta.nside,
         order = hp_meta.order,
         unit = _healpix_unit("cleanFDF"),
         extname = _healpix_extname("cleanFDF"),
+        coordsys = coordsys,
     )
-    write_healpix_stack(resultspath, Matrix(result.realCleanFDF), "realCleanFDF", result.phi;
+    write_healpix_stack(resultspath, result.realCleanFDF, "realCleanFDF", result.phi;
         nside = hp_meta.nside,
         order = hp_meta.order,
         unit = _healpix_unit("realCleanFDF"),
         extname = _healpix_extname("realCleanFDF"),
+        coordsys = coordsys,
     )
-    write_healpix_stack(resultspath, Matrix(result.imagCleanFDF), "imagCleanFDF", result.phi;
+    write_healpix_stack(resultspath, result.imagCleanFDF, "imagCleanFDF", result.phi;
         nside = hp_meta.nside,
         order = hp_meta.order,
         unit = _healpix_unit("imagCleanFDF"),
         extname = _healpix_extname("imagCleanFDF"),
+        coordsys = coordsys,
     )
-    write_healpix_stack(resultspath, Matrix(abs.(result.residual)), "residualFDF", result.phi;
+    write_healpix_stack(resultspath, abs.(result.residual), "residualFDF", result.phi;
         nside = hp_meta.nside,
         order = hp_meta.order,
         unit = _healpix_unit("residualFDF"),
         extname = _healpix_extname("residualFDF"),
+        coordsys = coordsys,
     )
 
     return nothing
@@ -208,6 +217,11 @@ function _add_noise!(Qnu, Unu, SNR_nu, rng)
     return nothing
 end
 
+# Convert an array to the requested working precision. `Float64` (the default)
+# returns the input unchanged, preserving the historical behaviour exactly.
+_to_precision(::Type{T}, x::Nothing) where {T} = nothing
+_to_precision(::Type{T}, x::AbstractArray) where {T} = eltype(x) === T ? x : T.(x)
+
 function _process_synchrotron_common(
     simu::AbstractString,
     LOS,
@@ -233,6 +247,8 @@ function _process_synchrotron_common(
     rm_clean_gain::Real = 0.1,
     rm_clean_niter::Integer = 1000,
     rm_clean_threshold::Real = 0.0,
+    float_type::Type{<:AbstractFloat} = Float64,
+    tile_rows::Union{Nothing, Integer} = nothing,
 )
     resultspath = joinpath(simu, LOS, "Synchrotron")
     mkpath(resultspath)
@@ -240,13 +256,53 @@ function _process_synchrotron_common(
     fits_metadata["LOS"] = String(LOS)
     fits_metadata["BLENPC"] = Float64(BoxLength_pc)
     grid_kind = simulation_grid_kind(simu)
+    grid_kind == :healpix && _validate_healpix_los(LOS)
     hp_meta = grid_kind == :healpix ? healpix_simulation_metadata(simu) : nothing
     fits_metadata["GRID"] = grid_kind == :healpix ? "HEALPIX" : "IMAGE"
+
+    if float_type !== Float64
+        hp_meta === nothing || throw_config_error(
+            "`precision = \"float32\"` is not supported with HEALPix inputs yet. Use the default precision.";
+            code=:unsupported_grid_operation)
+        fits_metadata["PRECIS"] = lowercase(string(float_type))
+    end
+
+    if tile_rows !== nothing
+        if hp_meta !== nothing
+            return _process_synchrotron_tiled_healpix(
+                simu, LOS, FaradayRotation, df, nuArray, PhiArray, BoxLength_pc,
+                conversionn, conversionT, conversionB, electron_density_builder;
+                write_ne = write_ne,
+                log_progress = log_progress,
+                tile_rows = Int(tile_rows),
+                resultspath = resultspath,
+                hp_meta = hp_meta,
+            )
+        end
+        return _process_synchrotron_tiled(
+            simu, LOS, FaradayRotation, df, nuArray, PhiArray, BoxLength_pc,
+            conversionn, conversionT, conversionB, electron_density_builder;
+            write_ne = write_ne,
+            log_progress = log_progress,
+            expected_shape = expected_shape,
+            fits_metadata = fits_metadata,
+            float_type = float_type,
+            tile_rows = Int(tile_rows),
+            resultspath = resultspath,
+        )
+    end
 
     SimuParameters = ReadSimulation(simu, LOS, conversionn, conversionT, conversionB)
     B1, B2, BLOS = SimuParameters[1], SimuParameters[2], SimuParameters[3]
     T, n = SimuParameters[4], SimuParameters[5]
     nHp = SimuParameters[7]
+
+    B1 = _to_precision(float_type, B1)
+    B2 = _to_precision(float_type, B2)
+    BLOS = _to_precision(float_type, BLOS)
+    T = _to_precision(float_type, T)
+    n = _to_precision(float_type, n)
+    nHp = _to_precision(float_type, nHp)
     _validate_processing_cube_shapes(simu, LOS, expected_shape,
         "B1" => B1,
         "B2" => B2,
@@ -266,7 +322,7 @@ function _process_synchrotron_common(
     noise_enabled = uppercase(add_noise) == "Y"
 
     _stage("Computing electron density")
-    ne = electron_density_builder(T, n, nHp)
+    ne = _to_precision(float_type, electron_density_builder(T, n, nHp))
     if write_ne
         if hp_meta === nothing
             WriteData3D(resultspath, ne, "ne", los_distance_array; ensure_path=false, metadata=fits_metadata)
@@ -292,7 +348,7 @@ function _process_synchrotron_common(
         mkpath(resultspath)
         _stage("Computing RM")
         dRM = deltaRM(BLOS, ne, los_pixel_length_pc)
-        RMcube = RM(dRM)
+        RMcube = RM(_to_precision(float_type, dRM))
         RMmap = RMcube[:, :, end]
         if hp_meta === nothing
             WriteData2D(resultspath, RMmap, "RMmap"; ensure_path=false, metadata=fits_metadata)
@@ -356,6 +412,32 @@ function _process_synchrotron_common(
         _write_healpix_stack_quantity(resultspath, Pnucube, "Pnu", nuArray_Hz, hp_meta)
         _write_healpix_map_quantity(resultspath, Pnumax, "Pnumax", hp_meta)
     end
+    _stage("Computing spectral index map")
+    try
+        if length(nuArray) >= 2
+            # T_nu is a brightness temperature, so the fitted log-log slope is
+            # the temperature index beta (T ∝ ν^β). The map is written in the
+            # flux-density convention alpha = beta + 2 (S_ν ∝ ν^α); the slope
+            # error is identical for both conventions. min_channels = 2 keeps
+            # short frequency axes usable (the error map is then NaN).
+            beta, alpha_err = spectral_index_map(T_nu, nuArray; min_channels = 2)
+            alpha = beta .+ 2.0
+            alpha_metadata = copy(fits_metadata)
+            alpha_metadata["ALPHADEF"] = "S_nu ~ nu^alpha; alpha = beta_Tb + 2"
+            if hp_meta === nothing
+                WriteData2D(resultspath, alpha, "alpha"; ensure_path=false, metadata=alpha_metadata)
+                WriteData2D(resultspath, alpha_err, "alpha_err"; ensure_path=false, metadata=alpha_metadata)
+            else
+                _write_healpix_map_quantity(resultspath, alpha, "alpha", hp_meta)
+                _write_healpix_map_quantity(resultspath, alpha_err, "alpha_err", hp_meta)
+            end
+        else
+            @info "Skipping spectral index map: at least two frequency channels are required"
+        end
+    catch err
+        @warn "Failed to compute or write the spectral index map" path = resultspath exception = (err, catch_backtrace())
+    end
+
     try
         write_polarization_diagnostic_plots(resultspath, Qnu, Unu, T_nu, nuArray_Hz; Pnumax = Pnumax)
     catch err
@@ -431,7 +513,8 @@ function ProcessSynchrotron(simu::AbstractString, LOS, FaradayRotation::Abstract
                        omegaPAH::Float64, XC::Float64, nuArray::AbstractArray, PhiArray,
                        PixelLength_pc, PixelLength_cm, BoxLength_pc,
                        DistanceArray, conversionn, conversionT, conversionB; log_progress::Bool = false, rng = Random.default_rng(), expected_shape = nothing, metadata = nothing,
-                       rm_clean_enabled::Bool = false, rm_clean_gain::Real = 0.1, rm_clean_niter::Integer = 1000, rm_clean_threshold::Real = 0.0)
+                       rm_clean_enabled::Bool = false, rm_clean_gain::Real = 0.1, rm_clean_niter::Integer = 1000, rm_clean_threshold::Real = 0.0,
+                       float_type::Type{<:AbstractFloat} = Float64, tile_rows::Union{Nothing, Integer} = nothing)
     return _process_synchrotron_common(
         simu,
         LOS,
@@ -457,6 +540,8 @@ function ProcessSynchrotron(simu::AbstractString, LOS, FaradayRotation::Abstract
         rm_clean_gain = rm_clean_gain,
         rm_clean_niter = rm_clean_niter,
         rm_clean_threshold = rm_clean_threshold,
+        float_type = float_type,
+        tile_rows = tile_rows,
     )
 end
 
@@ -464,7 +549,8 @@ function ProcessSynchrotron(simu::String, LOS, FaradayRotation::String, response
                        df::DataFrame, add_noise, SNR_nu, kernel_size_synchrotron, IonizationFraction::Float64,
                        nuArray::AbstractArray, PhiArray, PixelLength_pc, PixelLength_cm,
                        BoxLength_pc, DistanceArray, conversionn, conversionT, conversionB; log_progress::Bool = false, rng = Random.default_rng(), expected_shape = nothing, metadata = nothing,
-                       rm_clean_enabled::Bool = false, rm_clean_gain::Real = 0.1, rm_clean_niter::Integer = 1000, rm_clean_threshold::Real = 0.0)
+                       rm_clean_enabled::Bool = false, rm_clean_gain::Real = 0.1, rm_clean_niter::Integer = 1000, rm_clean_threshold::Real = 0.0,
+                       float_type::Type{<:AbstractFloat} = Float64, tile_rows::Union{Nothing, Integer} = nothing)
     return _process_synchrotron_common(
         simu,
         LOS,
@@ -490,6 +576,8 @@ function ProcessSynchrotron(simu::String, LOS, FaradayRotation::String, response
         rm_clean_gain = rm_clean_gain,
         rm_clean_niter = rm_clean_niter,
         rm_clean_threshold = rm_clean_threshold,
+        float_type = float_type,
+        tile_rows = tile_rows,
     )
 end
 
@@ -497,7 +585,8 @@ function ProcessSynchrotron(simu::String, LOS, FaradayRotation::String, response
                        df::DataFrame,  add_noise, SNR_nu, kernel_size_synchrotron, nuArray::AbstractArray, PhiArray,
                        PixelLength_pc, PixelLength_cm, BoxLength_pc,
                        DistanceArray, conversionn, conversionT, conversionB; log_progress::Bool = false, rng = Random.default_rng(), expected_shape = nothing, metadata = nothing,
-                       rm_clean_enabled::Bool = false, rm_clean_gain::Real = 0.1, rm_clean_niter::Integer = 1000, rm_clean_threshold::Real = 0.0)
+                       rm_clean_enabled::Bool = false, rm_clean_gain::Real = 0.1, rm_clean_niter::Integer = 1000, rm_clean_threshold::Real = 0.0,
+                       float_type::Type{<:AbstractFloat} = Float64, tile_rows::Union{Nothing, Integer} = nothing)
     return _process_synchrotron_common(
         simu,
         LOS,
@@ -523,5 +612,7 @@ function ProcessSynchrotron(simu::String, LOS, FaradayRotation::String, response
         rm_clean_gain = rm_clean_gain,
         rm_clean_niter = rm_clean_niter,
         rm_clean_threshold = rm_clean_threshold,
+        float_type = float_type,
+        tile_rows = tile_rows,
     )
 end

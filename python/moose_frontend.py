@@ -15,7 +15,8 @@ import shlex
 import shutil
 import subprocess
 import sys
-from datetime import datetime
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Iterable, List
 
@@ -27,6 +28,42 @@ class JuliaInvocationError(RuntimeError):
     """Raised when the Julia subprocess returns a non-zero exit code."""
 
 
+@dataclass(frozen=True)
+class FrontendOptions:
+    """Validated, normalized state needed to compose and run the Julia CLI."""
+
+    config_path: Path | None
+    julia_binary: str
+    quiet: bool
+    print_command: bool
+    dry_run: bool
+    write_back: bool
+    base_dir: str | None
+    simu: tuple[str, ...]
+    los: tuple[str, ...]
+    interpolation: str | None
+    conversionB: float | None
+    conversionn: float | None
+    conversionT: float | None
+    faraday: str | None
+    phimin: float | None
+    phimax: float | None
+    dphi: float | None
+    filtering: str | None
+    kernel_size: float | None
+    noise: str | None
+    snr: float | None
+    rng_seed: int | None
+    precision: str | None
+    tile_size: int | None
+    ne_option: str | None
+    zeta: float | None
+    Geff: float | None
+    phiPAH: float | None
+    XC: float | None
+    log_file: Path | None
+
+
 def resolve_config_path(parsed: argparse.Namespace) -> Path | None:
     """Return the selected config path, favoring the positional argument."""
 
@@ -34,79 +71,85 @@ def resolve_config_path(parsed: argparse.Namespace) -> Path | None:
     return Path(config_value) if config_value else None
 
 
-def build_julia_args(parsed: argparse.Namespace, config_path: Path | None) -> List[str]:
+def build_julia_args(options: FrontendOptions) -> List[str]:
     args: List[str] = []
 
-    if config_path:
-        args.append(str(Path(config_path)))
+    if options.config_path:
+        args.append(str(options.config_path))
 
-    if parsed.base_dir:
-        args.extend(["--base-dir", str(parsed.base_dir)])
+    if options.base_dir:
+        args.extend(["--base-dir", str(options.base_dir)])
 
-    for simu in parsed.simu or []:
+    for simu in options.simu:
         args.extend(["--simu", str(simu)])
 
-    for los in parsed.los or []:
+    for los in options.los:
         args.extend(["--los", los])
 
-    if parsed.interpolation:
-        args.extend(["--interpolation", str(parsed.interpolation)])
+    if options.interpolation:
+        args.extend(["--interpolation", str(options.interpolation)])
 
-    if parsed.conversionB is not None:
-        args.extend(["--conversionB", str(parsed.conversionB)])
+    if options.conversionB is not None:
+        args.extend(["--conversionB", str(options.conversionB)])
 
-    if parsed.conversionn is not None:
-        args.extend(["--conversionn", str(parsed.conversionn)])
+    if options.conversionn is not None:
+        args.extend(["--conversionn", str(options.conversionn)])
 
-    if parsed.conversionT is not None:
-        args.extend(["--conversionT", str(parsed.conversionT)])
+    if options.conversionT is not None:
+        args.extend(["--conversionT", str(options.conversionT)])
 
-    if parsed.faraday:
-        args.extend(["--faraday", parsed.faraday.upper()])
+    if options.faraday:
+        args.extend(["--faraday", options.faraday])
 
-    if parsed.phimin is not None:
-        args.extend(["--phimin", str(parsed.phimin)])
+    if options.phimin is not None:
+        args.extend(["--phimin", str(options.phimin)])
 
-    if parsed.phimax is not None:
-        args.extend(["--phimax", str(parsed.phimax)])
+    if options.phimax is not None:
+        args.extend(["--phimax", str(options.phimax)])
 
-    if parsed.dphi is not None:
-        args.extend(["--dphi", str(parsed.dphi)])
+    if options.dphi is not None:
+        args.extend(["--dphi", str(options.dphi)])
 
-    if parsed.filtering:
-        args.extend(["--filtering", parsed.filtering.upper()])
+    if options.filtering:
+        args.extend(["--filtering", options.filtering])
 
-    if parsed.kernel_size is not None:
-        args.extend(["--kernel-size", str(parsed.kernel_size)])
+    if options.kernel_size is not None:
+        args.extend(["--kernel-size", str(options.kernel_size)])
 
-    if parsed.noise:
-        args.extend(["--noise", parsed.noise.upper()])
+    if options.noise:
+        args.extend(["--noise", options.noise])
 
-    if parsed.snr is not None:
-        args.extend(["--snr", str(parsed.snr)])
+    if options.snr is not None:
+        args.extend(["--snr", str(options.snr)])
 
-    if parsed.rng_seed is not None:
-        args.extend(["--rng-seed", str(parsed.rng_seed)])
+    if options.rng_seed is not None:
+        args.extend(["--rng-seed", str(options.rng_seed)])
 
-    if parsed.ne_option:
-        args.extend(["--ne-option", str(parsed.ne_option)])
+    if options.precision:
+        args.extend(["--precision", options.precision])
 
-    if parsed.zeta is not None:
-        args.extend(["--zeta", str(parsed.zeta)])
+    if options.tile_size is not None:
+        args.extend(["--tile-size", str(options.tile_size)])
 
-    if parsed.Geff is not None:
-        args.extend(["--Geff", str(parsed.Geff)])
+    if options.ne_option:
+        args.extend(["--ne-option", str(options.ne_option)])
 
-    if parsed.phiPAH is not None:
-        args.extend(["--phiPAH", str(parsed.phiPAH)])
+    if options.zeta is not None:
+        args.extend(["--zeta", str(options.zeta)])
 
-    if parsed.XC is not None:
-        args.extend(["--XC", str(parsed.XC)])
+    if options.Geff is not None:
+        args.extend(["--Geff", str(options.Geff)])
 
-    if parsed.quiet:
+    if options.phiPAH is not None:
+        args.extend(["--phiPAH", str(options.phiPAH)])
+
+    if options.XC is not None:
+        args.extend(["--XC", str(options.XC)])
+
+    if options.quiet:
         args.append("--quiet")
 
-    if parsed.write_back:
+    if options.write_back:
         args.append("--write-back")
 
     return args
@@ -146,13 +189,19 @@ def _normalize_los_values(values: List[str] | None, parser: argparse.ArgumentPar
     return normalized
 
 
-def validate_args(parser: argparse.ArgumentParser, parsed: argparse.Namespace) -> Path | None:
-    """Validate CLI arguments and return the resolved config path."""
+def _normalize_flag(value: str | None) -> str | None:
+    """Return normalized Y/N flags while preserving unspecified values."""
+
+    return value.upper() if value else None
+
+
+def validate_args(parser: argparse.ArgumentParser, parsed: argparse.Namespace) -> FrontendOptions:
+    """Validate CLI arguments and return normalized front-end state."""
 
     if parsed.config and parsed.config_path:
         parser.error("Provide either a positional config path or --config, not both.")
 
-    parsed.los = _normalize_los_values(parsed.los, parser)
+    los = tuple(_normalize_los_values(parsed.los, parser))
     config_path = resolve_config_path(parsed)
     if config_path and not config_path.exists():
         parser.error(f"Config file not found: {config_path}")
@@ -181,7 +230,38 @@ def validate_args(parser: argparse.ArgumentParser, parsed: argparse.Namespace) -
                 + ", ".join(missing_faraday)
             )
 
-    return config_path
+    return FrontendOptions(
+        config_path=config_path,
+        julia_binary=parsed.julia_binary,
+        quiet=parsed.quiet,
+        print_command=parsed.print_command,
+        dry_run=parsed.dry_run,
+        write_back=parsed.write_back,
+        base_dir=parsed.base_dir,
+        simu=tuple(parsed.simu or ()),
+        los=los,
+        interpolation=parsed.interpolation,
+        conversionB=parsed.conversionB,
+        conversionn=parsed.conversionn,
+        conversionT=parsed.conversionT,
+        faraday=_normalize_flag(parsed.faraday),
+        phimin=parsed.phimin,
+        phimax=parsed.phimax,
+        dphi=parsed.dphi,
+        filtering=_normalize_flag(parsed.filtering),
+        kernel_size=parsed.kernel_size,
+        noise=_normalize_flag(parsed.noise),
+        snr=parsed.snr,
+        rng_seed=parsed.rng_seed,
+        precision=parsed.precision,
+        tile_size=parsed.tile_size,
+        ne_option=parsed.ne_option,
+        zeta=parsed.zeta,
+        Geff=parsed.Geff,
+        phiPAH=parsed.phiPAH,
+        XC=parsed.XC,
+        log_file=Path(parsed.log_file) if parsed.log_file else None,
+    )
 
 
 def _log_invocation(log_file: Path, command: Iterable[str], status: int, message: str | None) -> None:
@@ -189,7 +269,7 @@ def _log_invocation(log_file: Path, command: Iterable[str], status: int, message
 
     log_file.parent.mkdir(parents=True, exist_ok=True)
     entry = {
-        "timestamp": datetime.utcnow().isoformat() + "Z",
+        "timestamp": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
         "command": list(command),
         "command_string": format_command(command),
         "status": status,
@@ -200,24 +280,23 @@ def _log_invocation(log_file: Path, command: Iterable[str], status: int, message
         handle.write("\n")
 
 
-def run_julia_frontend(parsed: argparse.Namespace) -> None:
-    config_path = resolve_config_path(parsed)
-    cmd = [parsed.julia_binary, "--project", str(JULIA_ENTRYPOINT)]
-    cmd.extend(build_julia_args(parsed, config_path))
-
-    julia_path = shutil.which(parsed.julia_binary)
-    if julia_path is None:
-        raise FileNotFoundError(parsed.julia_binary)
-
+def run_julia_frontend(options: FrontendOptions) -> None:
+    cmd = [options.julia_binary, "--project", str(JULIA_ENTRYPOINT)]
+    cmd.extend(build_julia_args(options))
     command_string = format_command(cmd)
-    if parsed.print_command:
+
+    if options.print_command or options.dry_run:
         print(f"Julia command: {command_string}")
 
-    if parsed.dry_run:
+    if options.dry_run:
         message = "Dry run: Julia command not executed."
-        if parsed.log_file:
-            _log_invocation(Path(parsed.log_file), cmd, status=0, message=message)
+        if options.log_file:
+            _log_invocation(options.log_file, cmd, status=0, message=message)
         return
+
+    julia_path = shutil.which(options.julia_binary)
+    if julia_path is None:
+        raise FileNotFoundError(options.julia_binary)
 
     process = subprocess.run(cmd, cwd=REPO_ROOT)
 
@@ -228,8 +307,8 @@ def run_julia_frontend(parsed: argparse.Namespace) -> None:
             f"{process.returncode}. Command: {command_string}"
         )
 
-    if parsed.log_file:
-        _log_invocation(Path(parsed.log_file), cmd, process.returncode, failure_message)
+    if options.log_file:
+        _log_invocation(options.log_file, cmd, process.returncode, failure_message)
 
     if failure_message:
         raise JuliaInvocationError(failure_message)
@@ -322,6 +401,18 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--snr", type=float, help="Signal-to-noise ratio for noise injection.")
     parser.add_argument("--rng-seed", type=int, help="Random seed for reproducible noise injection.")
     parser.add_argument(
+        "--precision",
+        choices=["float64", "float32"],
+        help="Working precision of the processed cubes (float32 halves the memory footprint).",
+    )
+    parser.add_argument(
+        "--tile-size",
+        dest="tile_size",
+        type=int,
+        help="Process the sky plane in bands of this many rows (for cubes larger than RAM). "
+        "Incompatible with filtering, noise injection, and RM-CLEAN.",
+    )
+    parser.add_argument(
         "--ne-option",
         choices=["1", "2", "3"],
         help="Electron density prescription option (1, 2, or 3).",
@@ -341,8 +432,8 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> None:
     parser = build_parser()
     parsed = parser.parse_args(argv)
-    validate_args(parser, parsed)
-    run_julia_frontend(parsed)
+    options = validate_args(parser, parsed)
+    run_julia_frontend(options)
 
 
 if __name__ == "__main__":

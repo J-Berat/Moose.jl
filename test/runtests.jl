@@ -1,6 +1,7 @@
 using Test
 using Moose
 using FITSIO
+using HDF5
 using JSON
 using CSV
 include(joinpath(@__DIR__, "..", "src", "MOOSE_cli.jl"))
@@ -9,6 +10,12 @@ using Moose.MooseFromConfig: build_config
 function write_test_fits(path, data)
     FITS(path, "w") do fits
         write(fits, data)
+    end
+end
+
+function write_test_hdf5(path, data; dataset=splitext(basename(path))[1])
+    h5open(path, "w") do h5
+        h5[dataset] = data
     end
 end
 
@@ -80,6 +87,18 @@ end
     @test rm_cube[:, :, 2] == cube[:, :, 1] .+ cube[:, :, 2]
 end
 
+@testset "Line-of-sight reductions" begin
+    cube = reshape(Float32.(1:12), 2, 2, 3)
+    pixel_length = 0.5
+
+    @test Moose.constant_ne(1.25, (2, 3, 4)) == fill(1.25, 2, 3, 4)
+    @test Moose.DM(@view(cube[1, 1, :]), pixel_length) ≈ sum(cube[1, 1, :] .* pixel_length)
+    @test Moose.EM(@view(cube[1, 1, :]), pixel_length) ≈ sum(cube[1, 1, :] .^ 2 .* pixel_length)
+    @test Moose.DM(cube, pixel_length) ≈ dropdims(sum(cube .* pixel_length, dims = 3), dims = 3)
+    @test Moose.EM(cube, pixel_length) ≈ dropdims(sum(cube .^ 2 .* pixel_length, dims = 3), dims = 3)
+    @test Moose.intLOS(cube, pixel_length) ≈ dropdims(sum(cube .* pixel_length, dims = 3), dims = 3)
+end
+
 @testset "Moments" begin
     y = [1.0, 2.0, 3.0]
     x = [1.0, 2.0, 3.0]
@@ -91,6 +110,66 @@ end
 
     empty_moments = Moose.moments([0.0, 0.0]; x = [1.0, 2.0], threshold = 0.5)
     @test all(isnan, empty_moments)
+end
+
+@testset "Spectral index map" begin
+    nu = [100.0, 120.0, 150.0, 200.0, 300.0]  # MHz
+    nx, ny = 3, 2
+    beta_true = [-2.7 -0.5; -3.1 0.0; -2.0 -1.5]
+    amp = [1.0e-3 2.0; 5.0 0.7; 3.0e2 1.0]
+    cube = [amp[i, j] * nu[k]^beta_true[i, j] for i in 1:nx, j in 1:ny, k in eachindex(nu)]
+
+    alpha, alpha_err = spectral_index_map(cube, nu)
+    @test size(alpha) == (nx, ny)
+    @test size(alpha_err) == (nx, ny)
+    @test all(isapprox.(alpha, beta_true; atol = 1e-8))
+    # Exact power laws leave only round-off residuals; the slope error floor
+    # in double precision is ~1e-8 for |slope| of a few.
+    @test all(err -> isfinite(err) && err < 1e-6, alpha_err)
+
+    # The log-log slope is invariant under a rescaling of the frequency axis.
+    alpha_hz, _ = spectral_index_map(cube, nu .* 1e6)
+    @test all(isapprox.(alpha_hz, alpha; atol = 1e-8))
+
+    # Non-positive / non-finite channels are excluded pixel by pixel.
+    dirty = copy(cube)
+    dirty[1, 1, 2] = -1.0
+    dirty[1, 1, 4] = NaN
+    alpha_dirty, err_dirty = spectral_index_map(dirty, nu)
+    @test isapprox(alpha_dirty[1, 1], beta_true[1, 1]; atol = 1e-8)
+    @test isfinite(err_dirty[1, 1])
+
+    # Pixels with fewer than min_channels valid samples become NaN.
+    dirty[2, 2, :] .= 0.0
+    dirty[2, 2, 1] = 1.0
+    dirty[2, 2, 5] = 1.0
+    alpha_dirty, err_dirty = spectral_index_map(dirty, nu; min_channels = 3)
+    @test isnan(alpha_dirty[2, 2])
+    @test isnan(err_dirty[2, 2])
+
+    # Exactly two points fit a slope but leave no residual dof for the error.
+    two_pt, two_err = spectral_index_map(dirty, nu; min_channels = 2)
+    @test isapprox(two_pt[2, 2], 0.0; atol = 1e-8)
+    @test isnan(two_err[2, 2])
+
+    # The slope error tracks injected log-space scatter.
+    rng = Moose.Random.MersenneTwister(11)
+    noisy = [10.0 * nuk^-2.7 * 10.0^(0.01 * randn(rng)) for _ in 1:1, _ in 1:1, nuk in nu]
+    alpha_noisy, err_noisy = spectral_index_map(noisy, nu)
+    @test isapprox(alpha_noisy[1, 1], -2.7; atol = 0.5)
+    @test 0.0 < err_noisy[1, 1] < 0.5
+
+    # Input validation.
+    @test_throws Exception spectral_index_map(cube, nu[1:3])
+    @test_throws Exception spectral_index_map(cube, replace(nu, 100.0 => -100.0))
+    @test_throws Exception spectral_index_map(cube, nu; min_channels = 1)
+    @test_throws Exception spectral_index_map(cube[:, :, 1:2], nu[1:2]; min_channels = 3)
+
+    # HEALPix-style stacks (Npix x 1 x Nchan) are supported as-is.
+    hp_cube = reshape(cube[:, 1, :], nx, 1, length(nu))
+    hp_alpha, _ = spectral_index_map(hp_cube, nu)
+    @test size(hp_alpha) == (nx, 1)
+    @test all(isapprox.(hp_alpha[:, 1], beta_true[:, 1]; atol = 1e-8))
 end
 
 @testset "Power spectrum" begin
@@ -249,6 +328,59 @@ end
     end
 end
 
+@testset "HDF5 simulation cube reading" begin
+    cube = reshape(Float64.(1:8), 2, 2, 2)
+
+    mktempdir() do sim_dir
+        bx = cube
+        by = cube .+ 10
+        bz = cube .+ 20
+        density = cube .+ 30
+        temperature = cube .+ 40
+        density_hp = cube .+ 50
+
+        write_test_hdf5(joinpath(sim_dir, "Bx.h5"), bx)
+        write_test_hdf5(joinpath(sim_dir, "By.hdf5"), by)
+        write_test_hdf5(joinpath(sim_dir, "Bz.h5"), bz)
+        write_test_hdf5(joinpath(sim_dir, "density.h5"), density)
+        write_test_hdf5(joinpath(sim_dir, "temperature.h5"), temperature)
+        write_test_hdf5(joinpath(sim_dir, "densityHp.h5"), density_hp)
+
+        @test Moose.simulation_grid_kind(sim_dir) == :image
+        @test Moose.read_file(joinpath(sim_dir, "Bx.h5"), 2.0; expected_ndims=3) == 2.0 .* bx
+
+        B1, B2, BLOS, T, n, nH2, nHp = Moose.ReadSimulation(sim_dir, "y", 2.0, 3.0, 4.0)
+        @test B1 == permutedims(4.0 .* bz, [3, 1, 2])
+        @test B2 == permutedims(4.0 .* bx, [3, 1, 2])
+        @test BLOS == permutedims(4.0 .* by, [3, 1, 2])
+        @test T == permutedims(3.0 .* temperature, [3, 1, 2])
+        @test n == permutedims(2.0 .* density, [3, 1, 2])
+        @test nH2 === nothing
+        @test nHp == permutedims(2.0 .* density_hp, [3, 1, 2])
+    end
+
+    mktempdir() do sim_dir
+        shared_path = joinpath(sim_dir, "simulation.hdf5")
+        h5open(shared_path, "w") do h5
+            h5["fields/Bx"] = cube
+            h5["fields/By"] = cube .+ 1
+            h5["fields/Bz"] = cube .+ 2
+            h5["gas/density"] = cube .+ 3
+            h5["gas/temperature"] = cube .+ 4
+        end
+
+        @test Moose.source_label(Moose.simulation_field_source(sim_dir, "Bx")) == "$(shared_path):fields/Bx"
+        B1, B2, BLOS, T, n, nH2, nHp = Moose.ReadSimulation(sim_dir, "z", 1.0, 1.0, 1.0)
+        @test B1 == cube
+        @test B2 == cube .+ 1
+        @test BLOS == cube .+ 2
+        @test T == cube .+ 4
+        @test n == cube .+ 3
+        @test nH2 === nothing
+        @test nHp === nothing
+    end
+end
+
 @testset "Regression — Tnu3D cached path preserves column values" begin
     mktempdir() do dir
         emissivity_path = joinpath(dir, "emissivity.csv")
@@ -268,6 +400,134 @@ end
                 emissivity_cache = emissivity_cache,
             )
             @test t3d[i, j, :] ≈ expected
+        end
+    end
+end
+
+@testset "Regression — QUnu3D cached path preserves column values" begin
+    mktempdir() do dir
+        emissivity_path = joinpath(dir, "emissivity.csv")
+        write_test_emissivity(emissivity_path)
+        df = CSV.File(emissivity_path) |> Moose.DataFrame
+        Bperpcube = reshape(collect(range(0.1, 2.5, length = 12)), 2, 3, 2)
+        psi_src = reshape(collect(range(0.2, 0.8, length = 12)), 2, 3, 2)
+        RM = reshape(collect(range(-0.2, 0.3, length = 12)), 2, 3, 2)
+        nuArray = [99.0, 100.0, 101.0]
+        pixel_length_cm = 2.0
+
+        interpolator = Moose.EmissivityInterpolator(df)
+        emissivity_cache = Moose.build_emissivity_frequency_cache(interpolator, nuArray)
+        q3d, u3d = Moose.QUnu3D(Bperpcube, psi_src, RM, nuArray, df, pixel_length_cm)
+        qnf3d, unf3d = Moose.QUnuNoFaraday3D(Bperpcube, psi_src, nuArray, df, pixel_length_cm)
+
+        function old_buffered_qu!(Qnu, Unu, Bperp, psi, rm)
+            eps_buffer = similar(Bperp, Float64)
+            for k in eachindex(nuArray)
+                nui = nuArray[k]
+                cache_col = @view emissivity_cache[:, k]
+                Moose.emissivity_at_frequency!(
+                    eps_buffer,
+                    interpolator.B,
+                    interpolator.eps_interp,
+                    Bperp,
+                    nui;
+                    eps_cache_col = cache_col,
+                )
+
+                faraday_factor = (Moose.C_m / (nui * 1e6))^2
+                sum_u = 0.0
+                sum_q = 0.0
+                @inbounds for idx in eachindex(eps_buffer, psi, rm)
+                    arg = 2.0 * (psi[idx] + rm[idx] * faraday_factor)
+                    eps_val = eps_buffer[idx]
+                    sum_u += eps_val * sin(arg)
+                    sum_q += eps_val * cos(arg)
+                end
+
+                Unu[k] = Moose.BrightnessTemperature(nui, sum_u * pixel_length_cm)
+                Qnu[k] = Moose.BrightnessTemperature(nui, sum_q * pixel_length_cm)
+            end
+            return Qnu, Unu
+        end
+
+        function old_buffered_qu_no_faraday!(Qnu, Unu, Bperp, psi)
+            eps_buffer = similar(Bperp, Float64)
+            for k in eachindex(nuArray)
+                nui = nuArray[k]
+                cache_col = @view emissivity_cache[:, k]
+                Moose.emissivity_at_frequency!(
+                    eps_buffer,
+                    interpolator.B,
+                    interpolator.eps_interp,
+                    Bperp,
+                    nui;
+                    eps_cache_col = cache_col,
+                )
+
+                sum_u = 0.0
+                sum_q = 0.0
+                @inbounds for idx in eachindex(eps_buffer, psi)
+                    arg = 2.0 * psi[idx]
+                    eps_val = eps_buffer[idx]
+                    sum_u += eps_val * sin(arg)
+                    sum_q += eps_val * cos(arg)
+                end
+
+                Unu[k] = Moose.BrightnessTemperature(nui, sum_u * pixel_length_cm)
+                Qnu[k] = Moose.BrightnessTemperature(nui, sum_q * pixel_length_cm)
+            end
+            return Qnu, Unu
+        end
+
+        old_q3d = zeros(size(q3d))
+        old_u3d = zeros(size(u3d))
+        old_qnf3d = zeros(size(qnf3d))
+        old_unf3d = zeros(size(unf3d))
+        for i in axes(Bperpcube, 1), j in axes(Bperpcube, 2)
+            old_buffered_qu!(
+                @view(old_q3d[i, j, :]),
+                @view(old_u3d[i, j, :]),
+                @view(Bperpcube[i, j, :]),
+                @view(psi_src[i, j, :]),
+                @view(RM[i, j, :]),
+            )
+            old_buffered_qu_no_faraday!(
+                @view(old_qnf3d[i, j, :]),
+                @view(old_unf3d[i, j, :]),
+                @view(Bperpcube[i, j, :]),
+                @view(psi_src[i, j, :]),
+            )
+        end
+        @test q3d == old_q3d
+        @test u3d == old_u3d
+        @test qnf3d == old_qnf3d
+        @test unf3d == old_unf3d
+
+        for i in axes(Bperpcube, 1), j in axes(Bperpcube, 2)
+            q, u = Moose.QUnu(
+                @view(Bperpcube[i, j, :]),
+                @view(psi_src[i, j, :]),
+                @view(RM[i, j, :]),
+                nuArray,
+                df,
+                pixel_length_cm;
+                precomputed_interp = interpolator,
+                emissivity_cache = emissivity_cache,
+            )
+            @test q3d[i, j, :] ≈ q
+            @test u3d[i, j, :] ≈ u
+
+            qnf, unf = Moose.QUnuNoFaraday(
+                @view(Bperpcube[i, j, :]),
+                @view(psi_src[i, j, :]),
+                nuArray,
+                df,
+                pixel_length_cm;
+                precomputed_interp = interpolator,
+                emissivity_cache = emissivity_cache,
+            )
+            @test qnf3d[i, j, :] ≈ qnf
+            @test unf3d[i, j, :] ≈ unf
         end
     end
 end
@@ -511,15 +771,30 @@ end
         @test isfile(joinpath(result_dir, "Pnu.fits"))
         @test isfile(joinpath(result_dir, "Tnu.fits"))
         @test isfile(joinpath(result_dir, "Pnumax.fits"))
+        @test isfile(joinpath(result_dir, "alpha.fits"))
+        @test isfile(joinpath(result_dir, "alpha_err.fits"))
         @test isfile(joinpath(result_dir, "polarization_angle_vs_lambda2.png"))
         @test isfile(joinpath(result_dir, "fractional_polarization_vs_lambda2.png"))
         @test isfile(joinpath(result_dir, "stokes_qu_diagram.png"))
+        @test isfile(joinpath(result_dir, "polarization_diagnostics.png"))
+        @test isfile(joinpath(result_dir, "polarization_diagnostics.pdf"))
         @test isfile(joinpath(sim_dir, "z", "Synchrotron", "ne.fits"))
         @test isfile(joinpath(base_dir, "MOOSE_summary.log"))
 
         qnu = read(FITS(joinpath(result_dir, "Qnu.fits"))[1])
         @test size(qnu) == (2, 2, 2)
         @test all(isfinite, qnu)
+
+        alpha = read(FITS(joinpath(result_dir, "alpha.fits"))[1])
+        alpha_err = read(FITS(joinpath(result_dir, "alpha_err.fits"))[1])
+        @test size(alpha) == (2, 2)
+        @test all(isfinite, alpha)
+        # Two frequency channels leave no residual dof for the slope error.
+        @test all(isnan, alpha_err)
+        alpha_header = FITS(joinpath(result_dir, "alpha.fits")) do fits
+            read_header(fits[1])
+        end
+        @test alpha_header["ALPHADEF"] == "S_nu ~ nu^alpha; alpha = beta_Tb + 2"
 
         q_header = FITS(joinpath(result_dir, "Qnu.fits")) do fits
             read_header(fits[1])
@@ -654,6 +929,8 @@ end
         @test isfile(joinpath(result_dir, "Qnu_0001_p1p0e8.fits"))
         @test isfile(joinpath(result_dir, "Unu_0002_p1p01e8.fits"))
         @test isfile(joinpath(result_dir, "Pnumax.fits"))
+        @test isfile(joinpath(result_dir, "alpha.fits"))
+        @test isfile(joinpath(result_dir, "alpha_err.fits"))
         @test isfile(joinpath(result_dir, "FDF_0002_p0p0.fits"))
         @test isfile(joinpath(result_dir, "realFDF_0001_m2p0.fits"))
         @test isfile(joinpath(result_dir, "imagFDF_0003_p2p0.fits"))
@@ -665,6 +942,231 @@ end
         q_map = Moose.read_healpix_map(joinpath(result_dir, "Qnu_0001_p1p0e8.fits"))
         @test length(q_map) == npix
         @test all(isfinite, collect(q_map))
+    end
+end
+
+@testset "Demo data generator with known results" begin
+    # Faraday-enabled demo (Faraday screen + uniform emitter): RM map,
+    # spectral index, Tnu, Q/U per channel and integrated maps are exact;
+    # the FDF peak position is quantized on the dphi grid.
+    mktempdir() do dir
+        demo = make_demo_data(dir; npix = 4)
+        @test isfile(demo.config_path)
+        @test isfile(demo.emissivity_path)
+        @test isfile(joinpath(demo.base_dir, "expected_results.json"))
+
+        Moose.MOOSE_from_config(demo.config_path; quiet = true)
+
+        result_dir = joinpath(demo.simulation_dir, "z", "Synchrotron", "WithFaraday")
+        @test isdir(result_dir)
+
+        rmmap = read(FITS(joinpath(result_dir, "RMmap.fits"))[1])
+        @test all(isapprox.(rmmap, demo.expected.rm; rtol = 1e-10))
+
+        alpha = read(FITS(joinpath(result_dir, "alpha.fits"))[1])
+        @test all(isapprox.(alpha, demo.expected.alpha; atol = 1e-8))
+
+        tnu = read(FITS(joinpath(result_dir, "Tnu.fits"))[1])
+        qnu = read(FITS(joinpath(result_dir, "Qnu.fits"))[1])
+        unu = read(FITS(joinpath(result_dir, "Unu.fits"))[1])
+        @test size(tnu, 3) == length(demo.expected.nu_MHz)
+        for k in axes(tnu, 3)
+            @test all(isapprox.(tnu[:, :, k], demo.expected.Tnu[k]; rtol = 1e-8))
+            @test all(isapprox.(qnu[:, :, k] ./ tnu[:, :, k], demo.expected.qnu_over_tnu[k]; atol = 1e-8))
+            @test all(isapprox.(unu[:, :, k] ./ tnu[:, :, k], demo.expected.unu_over_tnu[k]; atol = 1e-8))
+        end
+
+        # Faraday-thin emitter: no depolarization at any frequency.
+        pol_fraction = sqrt.(qnu .^ 2 .+ unu .^ 2) ./ tnu
+        @test all(isapprox.(pol_fraction, demo.expected.pol_fraction; rtol = 1e-8))
+
+        root_dir = joinpath(demo.simulation_dir, "z", "Synchrotron")
+        intne = read(FITS(joinpath(root_dir, "intne.fits"))[1])
+        @test all(isapprox.(intne, demo.expected.intne; rtol = 1e-10))
+        intblos = read(FITS(joinpath(root_dir, "intBLOS.fits"))[1])
+        @test all(isapprox.(intblos, demo.expected.intBLOS; rtol = 1e-10))
+
+        # The |FDF| peak of the Faraday-thin emitter sits at RM_screen,
+        # within one Faraday-depth grid step.
+        fdf = read(FITS(joinpath(result_dir, "FDF.fits"))[1])
+        phi = collect(-5.0:0.25:5.0)
+        @test size(fdf, 3) == length(phi)
+        peak_phi = phi[argmax(fdf[1, 1, :])]
+        @test abs(peak_phi - demo.expected.fdf_peak_phi) <= 0.25
+    end
+
+    # Faraday-disabled demo: the intrinsic polarization observables are exact.
+    mktempdir() do dir
+        demo = make_demo_data(dir; npix = 4, faraday = false)
+        @test demo.expected.fdf_peak_phi === nothing
+
+        Moose.MOOSE_from_config(demo.config_path; quiet = true)
+
+        result_dir = joinpath(demo.simulation_dir, "z", "Synchrotron", "noFaraday")
+        qnu = read(FITS(joinpath(result_dir, "Qnu.fits"))[1])
+        unu = read(FITS(joinpath(result_dir, "Unu.fits"))[1])
+        tnu = read(FITS(joinpath(result_dir, "Tnu.fits"))[1])
+
+        # psi_src = π modulo π ⇒ Q/T = +pol_fraction, U ≈ 0.
+        @test all(isapprox.(qnu ./ tnu, demo.expected.pol_fraction; atol = 1e-8))
+        @test all(abs.(unu) .<= 1e-10 .* tnu)
+
+        pol_fraction = sqrt.(qnu .^ 2 .+ unu .^ 2) ./ tnu
+        @test all(isapprox.(pol_fraction, demo.expected.pol_fraction; rtol = 1e-8))
+
+        pol_angle = 0.5 .* atan.(unu, qnu)
+        @test all(isapprox.(abs.(pol_angle), demo.expected.intrinsic_pol_angle; atol = 1e-8))
+    end
+
+    # Input validation.
+    mktempdir() do dir
+        @test_throws Exception make_demo_data(dir; npix = 1)
+        @test_throws Exception make_demo_data(dir; B_perp_uG = 2.5)
+        @test_throws Exception make_demo_data(dir; nu_MHz = [100.0, 125.0, 150.0])
+        @test_throws Exception make_demo_data(dir; pol_fraction = 1.5)
+        @test_throws Exception make_demo_data(dir; B_nodes_uG = 1.0:1.0:6.0)
+    end
+end
+
+@testset "Precision option (float32)" begin
+    mktempdir() do dir
+        demo = make_demo_data(dir; npix = 4)
+        cfg = JSON.parsefile(demo.config_path)
+        cfg["precision"] = "float32"
+        write(demo.config_path, JSON.json(cfg))
+
+        Moose.MOOSE_from_config(demo.config_path; quiet = true)
+
+        result_dir = joinpath(demo.simulation_dir, "z", "Synchrotron", "WithFaraday")
+        qnu = read(FITS(joinpath(result_dir, "Qnu.fits"))[1])
+        tnu = read(FITS(joinpath(result_dir, "Tnu.fits"))[1])
+        fdf = read(FITS(joinpath(result_dir, "FDF.fits"))[1])
+        rmmap = read(FITS(joinpath(result_dir, "RMmap.fits"))[1])
+
+        # The cubes are stored in single precision...
+        @test eltype(qnu) == Float32
+        @test eltype(tnu) == Float32
+        @test eltype(fdf) == Float32
+        @test eltype(rmmap) == Float32
+
+        # ... and still match the analytic expectations at float32 accuracy.
+        @test all(isapprox.(rmmap, demo.expected.rm; rtol = 1e-5))
+        for k in axes(tnu, 3)
+            @test all(isapprox.(tnu[:, :, k], demo.expected.Tnu[k]; rtol = 1e-5))
+            @test all(isapprox.(qnu[:, :, k] ./ tnu[:, :, k], demo.expected.qnu_over_tnu[k]; atol = 1e-4))
+        end
+        alpha = read(FITS(joinpath(result_dir, "alpha.fits"))[1])
+        @test all(isapprox.(alpha, demo.expected.alpha; atol = 1e-3))
+
+        header = FITS(joinpath(result_dir, "Qnu.fits")) do fits
+            read_header(fits[1])
+        end
+        @test header["PRECIS"] == "float32"
+    end
+
+    mktempdir() do dir
+        demo = make_demo_data(dir; npix = 4)
+        cfg = JSON.parsefile(demo.config_path)
+        cfg["precision"] = "float16"
+        write(demo.config_path, JSON.json(cfg))
+        @test_throws Exception Moose.MOOSE_from_config(demo.config_path; quiet = true)
+    end
+end
+
+@testset "Tiled processing option" begin
+    # A tiled run must reproduce the plain run (same per-pixel math), and
+    # therefore also the analytic demo expectations. npix = 5 with
+    # tile_size = 2 exercises an uneven final band.
+    mktempdir() do dir
+        ref = make_demo_data(joinpath(dir, "ref"); npix = 5)
+        Moose.MOOSE_from_config(ref.config_path; quiet = true)
+
+        tiled = make_demo_data(joinpath(dir, "tiled"); npix = 5)
+        cfg = JSON.parsefile(tiled.config_path)
+        cfg["tile_size"] = 2
+        write(tiled.config_path, JSON.json(cfg))
+        Moose.MOOSE_from_config(tiled.config_path; quiet = true)
+
+        products = [
+            joinpath("WithFaraday", name) for name in
+            ("Qnu.fits", "Unu.fits", "Tnu.fits", "Pnu.fits", "FDF.fits",
+             "realFDF.fits", "imagFDF.fits", "RMmap.fits", "Pnumax.fits",
+             "Pmax.fits", "alpha.fits", "alpha_err.fits")
+        ]
+        append!(products, ["ne.fits", "intBtotal.fits", "sigmaBtotal.fits", "intne.fits",
+                           "sigmane.fits", "sigmaT.fits", "intBLOS.fits", "sigmaBLOS.fits", "intBperp.fits"])
+
+        for rel in products
+            a = read(FITS(joinpath(ref.simulation_dir, "z", "Synchrotron", rel))[1])
+            b = read(FITS(joinpath(tiled.simulation_dir, "z", "Synchrotron", rel))[1])
+            @test size(a) == size(b)
+            scale = maximum(abs, a[isfinite.(a)]; init = 0.0)
+            @test all(@. (isnan(a) & isnan(b)) | (abs(a - b) <= 1e-10 * scale + 1e-10 * abs(a)))
+        end
+
+        # The tiled run also matches the analytic expectations directly.
+        result_dir = joinpath(tiled.simulation_dir, "z", "Synchrotron", "WithFaraday")
+        rmmap = read(FITS(joinpath(result_dir, "RMmap.fits"))[1])
+        @test all(isapprox.(rmmap, tiled.expected.rm; rtol = 1e-10))
+        alpha = read(FITS(joinpath(result_dir, "alpha.fits"))[1])
+        @test all(isapprox.(alpha, tiled.expected.alpha; atol = 1e-8))
+
+        header = FITS(joinpath(result_dir, "Qnu.fits")) do fits
+            read_header(fits[1])
+        end
+        @test header["TILESIZE"] == 2
+        @test header["CFGHASH"] isa String
+
+        # No leftover streaming scratch files.
+        @test isempty(filter(name -> endswith(name, ".part"), readdir(result_dir)))
+    end
+
+    # float32 + tiling combine.
+    mktempdir() do dir
+        demo = make_demo_data(dir; npix = 4)
+        cfg = JSON.parsefile(demo.config_path)
+        cfg["tile_size"] = 3
+        cfg["precision"] = "float32"
+        write(demo.config_path, JSON.json(cfg))
+        Moose.MOOSE_from_config(demo.config_path; quiet = true)
+
+        result_dir = joinpath(demo.simulation_dir, "z", "Synchrotron", "WithFaraday")
+        tnu = read(FITS(joinpath(result_dir, "Tnu.fits"))[1])
+        @test eltype(tnu) == Float32
+        for k in axes(tnu, 3)
+            @test all(isapprox.(tnu[:, :, k], demo.expected.Tnu[k]; rtol = 1e-5))
+        end
+    end
+
+    # Config-time incompatibilities.
+    mktempdir() do dir
+        demo = make_demo_data(dir; npix = 4)
+        base = JSON.parsefile(demo.config_path)
+
+        noisy = copy(base)
+        noisy["tile_size"] = 2
+        noisy["add_noise"] = "Y"
+        noisy["SNR_nu"] = 5.0
+        write(demo.config_path, JSON.json(noisy))
+        @test_throws Exception Moose.MOOSE_from_config(demo.config_path; quiet = true)
+
+        filtered = copy(base)
+        filtered["tile_size"] = 2
+        filtered["responseSynchrotron"] = "Y"
+        filtered["kernel_size_synchrotron"] = 2.0
+        write(demo.config_path, JSON.json(filtered))
+        @test_throws Exception Moose.MOOSE_from_config(demo.config_path; quiet = true)
+
+        cleaned = copy(base)
+        cleaned["tile_size"] = 2
+        cleaned["rm_clean"] = Dict("enabled" => true, "gain" => 0.1, "niter" => 5, "threshold" => 0.0)
+        write(demo.config_path, JSON.json(cleaned))
+        @test_throws Exception Moose.MOOSE_from_config(demo.config_path; quiet = true)
+
+        invalid = copy(base)
+        invalid["tile_size"] = 0
+        write(demo.config_path, JSON.json(invalid))
+        @test_throws Exception Moose.MOOSE_from_config(demo.config_path; quiet = true)
     end
 end
 
@@ -730,6 +1232,299 @@ end
         @test auto_cube[1] ≈ direct_cube[1]
         @test auto_cube[2] ≈ direct_cube[2]
         @test auto_cube[3] ≈ direct_cube[3]
+    end
+end
+
+@testset "HEALPix ordering dispatch" begin
+    @test Moose.healpix_order(Moose.healpix_map(fill(0.0, 12); order=:ring)) == :ring
+    @test Moose.healpix_order(Moose.healpix_map(fill(0.0, 12); order=:nested)) == :nested
+    @test Moose.normalize_healpix_order(" RING ") == :ring
+
+    # Mixed Q/U ordering must be rejected, not silently combined.
+    q_ring = [Moose.healpix_map(fill(1.0, 12); order=:ring)]
+    u_nested = [Moose.healpix_map(fill(0.0, 12); order=:nested)]
+    @test_throws ErrorException Moose.RMSynthesisHealpix(q_ring, u_nested, [1.0e9], [-10.0, 0.0, 10.0])
+    @test_throws ErrorException Moose.RMCleanHealpix(q_ring, u_nested, [1.0e9], [-10.0, 0.0, 10.0])
+end
+
+@testset "HEALPix UNSEEN handling" begin
+    mktempdir() do dir
+        # NaN pixels are stored as the UNSEEN sentinel...
+        map_path = joinpath(dir, "masked.fits")
+        values = fill(1.0, 12)
+        values[3] = NaN
+        Moose.write_healpix_map(map_path, values; nside=1, order=:ring)
+        raw = Moose.read_healpix_map(map_path)
+        @test raw[3] <= -1.6e30
+
+        # ...and converted back to NaN when read as a stack.
+        stack = Moose.read_healpix_stack(map_path)
+        @test isnan(stack.pixels[3, 1])
+        @test stack.pixels[1, 1] == 1.0
+
+        # Opt-out flags on both sides.
+        raw_stack = Moose.read_healpix_stack(map_path; unseen_to_nan=false)
+        @test raw_stack.pixels[3, 1] <= -1.6e30
+        plain_path = joinpath(dir, "plain.fits")
+        Moose.write_healpix_map(plain_path, values; nside=1, order=:ring, nan_to_unseen=false)
+        @test isnan(Moose.read_healpix_map(plain_path)[3])
+    end
+end
+
+@testset "HEALPix cube IO & COORDSYS" begin
+    pixels = hcat(fill(1.0, 12), fill(2.0, 12))
+    pixels[1, 1] = Moose.HEALPIX_UNSEEN
+
+    mktempdir() do dir
+        cube_path = joinpath(dir, "cube.fits")
+        Moose.write_healpix_cube(cube_path, pixels, [10.0, 20.0];
+            order=:ring, coordsys="G", unit="Jy", coordname="PHI", nan_to_unseen=false)
+        @test Moose.detect_fits_grid(cube_path) == :healpix
+
+        stack, coords = Moose.read_healpix_cube(cube_path)
+        @test stack isa Moose.HealpixStack
+        @test size(stack.pixels) == (12, 2)
+        @test stack.nside == 1
+        @test stack.order == :ring
+        @test stack.coordsys == "G"
+        @test coords == [10.0, 20.0]
+        @test isnan(stack.pixels[1, 1])   # UNSEEN masked on read
+        @test stack.pixels[2, 1] == 1.0
+        @test stack.pixels[1, 2] == 2.0
+
+        # COORDSYS survives the single-map writer too.
+        map_path = joinpath(dir, "map.fits")
+        Moose.write_healpix_map(map_path, fill(1.0, 12); nside=1, order=:ring, coordsys="g")
+        @test Moose.read_healpix_stack(map_path).coordsys == "G"
+
+        # format=:cube writes a single file per stack.
+        clean = copy(pixels)
+        clean[1, 1] = 1.0
+        paths = Moose.write_healpix_stack(dir, clean, "stackcube", [1.0, 2.0];
+            order=:ring, format=:cube, coordsys="C")
+        @test length(paths) == 1
+        st, c = Moose.read_healpix_cube(only(paths))
+        @test st.pixels == clean
+        @test st.coordsys == "C"
+        @test c == [1.0, 2.0]
+
+        # write_healpix_rm_result honours format=:cube and propagates COORDSYS.
+        q = Moose.HealpixStack(hcat(fill(1.0, 12), fill(0.5, 12)); order=:ring, coordsys="G")
+        u = Moose.HealpixStack(hcat(fill(0.0, 12), fill(0.25, 12)); order=:ring)
+        result = Moose.RMSynthesisHealpix(q, u, [1.0e9, 1.1e9], [-10.0, 0.0, 10.0])
+        @test result.coordsys == "G"
+        rm_paths = Moose.write_healpix_rm_result(joinpath(dir, "rm_cube"), result; prefix="t", format=:cube)
+        @test length(rm_paths.fdf) == 1
+        fdf_stack, fdf_phi = Moose.read_healpix_cube(only(rm_paths.fdf))
+        @test size(fdf_stack.pixels) == (12, 3)
+        @test fdf_stack.coordsys == "G"
+        @test fdf_phi == [-10.0, 0.0, 10.0]
+    end
+end
+
+@testset "HEALPix reorder & udgrade" begin
+    stack = Moose.HealpixStack(reshape(collect(1.0:12.0), 12, 1); order=:ring, coordsys="G")
+
+    nested = Moose.healpix_reorder(stack, :nested)
+    @test nested.order == :nested
+    @test sort(vec(nested.pixels)) == collect(1.0:12.0)
+    back = Moose.healpix_reorder(nested, :ring)
+    @test back.pixels == stack.pixels
+    @test back.coordsys == "G"
+    @test Moose.healpix_reorder(stack, :ring) === stack
+
+    # Upgrade replicates parents (sum scales by 4); degrading back is exact.
+    up = Moose.healpix_udgrade(stack, 2)
+    @test up.nside == 2
+    @test size(up.pixels) == (48, 1)
+    @test sum(up.pixels) ≈ 4 * sum(stack.pixels)
+    @test up.coordsys == "G"
+    down = Moose.healpix_udgrade(up, 1)
+    @test down.pixels ≈ stack.pixels
+
+    # Degrading averages children and ignores NaN; all-NaN children stay NaN.
+    v = fill(1.0, 48)
+    v[1] = NaN
+    v[2], v[3], v[4] = 2.0, 4.0, 6.0     # children of nested parent 0
+    v[5:8] .= NaN                          # children of nested parent 1
+    st = Moose.HealpixStack(reshape(v, 48, 1); order=:nested)
+    dg = Moose.healpix_udgrade(st, 1)
+    @test dg.pixels[1, 1] ≈ 4.0
+    @test isnan(dg.pixels[2, 1])
+    @test all(dg.pixels[3:end, 1] .≈ 1.0)
+
+    # Vector variant and invalid NSIDE.
+    @test Moose.healpix_udgrade(fill(1.0, 12), 2; order=:ring) ≈ fill(1.0, 48)
+    @test_throws ErrorException Moose.healpix_udgrade(stack, 3)
+end
+
+@testset "HEALPix smoothing" begin
+    npix8 = 768  # NSIDE = 8
+
+    # A constant map is a pure monopole: invariant under beam smoothing.
+    stack = Moose.HealpixStack(fill(2.5, npix8, 1); order=:ring, coordsys="G")
+    sm = Moose.healpix_smooth(stack; fwhm_deg=10.0)
+    @test sm.nside == 8
+    @test sm.order == :ring
+    @test sm.coordsys == "G"
+    @test all(isapprox.(sm.pixels, 2.5; rtol=1e-4))
+
+    # Masked smoothing: NaN pixels stay NaN, the rest stays exactly constant
+    # (numerator and denominator see the same window).
+    v = fill(1.0, npix8)
+    v[10] = NaN
+    sm2 = Moose.healpix_smooth(v; fwhm_deg=10.0, order=:ring)
+    @test isnan(sm2[10])
+    valid = .!isnan.(sm2)
+    @test count(valid) == npix8 - 1
+    @test all(isapprox.(sm2[valid], 1.0; rtol=1e-4))
+
+    # Nested input comes back nested.
+    nstack = Moose.healpix_reorder(stack, :nested)
+    smn = Moose.healpix_smooth(nstack; fwhm_deg=10.0)
+    @test smn.order == :nested
+    @test all(isapprox.(smn.pixels, 2.5; rtol=1e-4))
+
+    # Exactly one FWHM keyword is required.
+    @test_throws ErrorException Moose.healpix_smooth(stack)
+    @test_throws ErrorException Moose.healpix_smooth(stack; fwhm_deg=1.0, fwhm_arcmin=60.0)
+end
+
+@testset "RM synthesis & RM-CLEAN masked pixels" begin
+    nu = [1.0e9, 1.1e9]
+    phi = [-10.0, 0.0, 10.0]
+
+    q = fill(1.0, 4, 2)
+    u = fill(0.5, 4, 2)
+    q[2, :] .= NaN
+
+    fdf, re, im_ = Moose.RMSynthesis(q, u, nu, phi)
+    @test all(isnan, fdf[2, :])
+    @test all(isnan, re[2, :])
+    @test all(isnan, im_[2, :])
+    @test all(isfinite, fdf[1, :])
+
+    # Valid rows are identical to a fully unmasked computation.
+    fdf0, _, _ = Moose.RMSynthesis(fill(1.0, 4, 2), fill(0.5, 4, 2), nu, phi)
+    @test fdf[1, :] ≈ fdf0[1, :]
+    @test fdf[3, :] ≈ fdf0[3, :]
+
+    clean = Moose.RMClean(q, u, nu, phi; gain=0.1, niter=10)
+    @test all(isnan, clean.cleanFDF[2, :])
+    @test all(isnan, clean.residual[2, :])
+    @test all(isfinite, clean.cleanFDF[1, :])
+end
+
+@testset "HEALPix simulation NSIDE unification" begin
+    mktempdir() do base_dir
+        sim_dir = joinpath(base_dir, "mixed_hp")
+        mkdir(sim_dir)
+
+        npix = 12
+        write_test_healpix_cube(joinpath(sim_dir, "Bx.fits"), hcat(fill(1.0, npix), fill(1.2, npix)))
+        # By is provided at NSIDE=2 and must be degraded to Bx's NSIDE=1.
+        write_test_healpix_cube(joinpath(sim_dir, "By.fits"), hcat(fill(0.5, 48), fill(0.4, 48)); nside=2)
+        write_test_healpix_cube(joinpath(sim_dir, "Bz.fits"), hcat(fill(0.25, npix), fill(0.3, npix)))
+        write_test_healpix_cube(joinpath(sim_dir, "density.fits"), hcat(fill(1.0, npix), fill(1.1, npix)))
+        write_test_healpix_cube(joinpath(sim_dir, "temperature.fits"), hcat(fill(100.0, npix), fill(110.0, npix)))
+
+        B1, B2, BLOS, T, n, nH2, nHp = Moose.ReadSimulation(sim_dir, "z", 1.0, 1.0, 1.0)
+        @test size(B1) == (npix, 1, 2)
+        @test size(B2) == (npix, 1, 2)   # degraded from 48 to 12 pixels
+        @test all(B2[:, 1, 1] .≈ 0.5)
+        @test all(B2[:, 1, 2] .≈ 0.4)
+
+        # HEALPix lines of sight are radial: only LOS="z" is meaningful, and
+        # Bx/By/Bz must be per-pixel (e_theta, e_phi, e_r) tangent components.
+        @test_throws Exception Moose.ReadSimulation(sim_dir, "x", 1.0, 1.0, 1.0)
+        @test_throws Exception Moose.ReadSimulation(sim_dir, "y", 1.0, 1.0, 1.0)
+    end
+end
+
+@testset "Tiled HEALPix end-to-end run" begin
+    mktempdir() do base_dir
+        function make_hp_sim(dir)
+            mkdir(dir)
+            npix = 12
+            write_test_healpix_cube(joinpath(dir, "Bx.fits"), hcat(fill(1.0, npix), fill(1.2, npix)))
+            write_test_healpix_cube(joinpath(dir, "By.fits"), hcat(fill(0.5, npix), fill(0.4, npix)))
+            write_test_healpix_cube(joinpath(dir, "Bz.fits"), hcat(fill(0.25, npix), fill(0.3, npix)))
+            write_test_healpix_cube(joinpath(dir, "density.fits"), hcat(fill(1.0, npix), fill(1.1, npix)))
+            write_test_healpix_cube(joinpath(dir, "temperature.fits"), hcat(fill(100.0, npix), fill(110.0, npix)))
+            return dir
+        end
+
+        tiled_dir = make_hp_sim(joinpath(base_dir, "hp_tiled"))
+        plain_dir = make_hp_sim(joinpath(base_dir, "hp_plain"))
+
+        interpolation_path = joinpath(base_dir, "emissivity.csv")
+        write_test_emissivity(interpolation_path)
+
+        base_cfg = Dict(
+            "base_dir" => base_dir,
+            "chosen_LOS" => ["z"],
+            "interpolation_file_path" => interpolation_path,
+            "faraday" => Dict("enabled" => "Y", "phimin" => -2.0, "phimax" => 2.0, "dphi" => 2.0),
+            "responseSynchrotron" => "N",
+            "add_noise" => "N",
+            "ne_option" => "2",
+            "IonizationFraction" => 0.1,
+            "freq" => Dict("start" => 100.0, "end" => 101.0, "step" => 1.0),
+            "BoxLength_pc" => 2.0,
+            "BoxLength_pix" => 2,
+            "log_progress" => false,
+        )
+
+        tiled_cfg = copy(base_cfg)
+        tiled_cfg["simulations"] = [tiled_dir]
+        tiled_cfg["tile_size"] = 5   # 12 pixels -> bands of 5, 5, 2
+        tiled_config_path = joinpath(base_dir, "moose_config_tiled.json")
+        write(tiled_config_path, JSON.json(tiled_cfg))
+
+        plain_cfg = copy(base_cfg)
+        plain_cfg["simulations"] = [plain_dir]
+        plain_config_path = joinpath(base_dir, "moose_config_plain.json")
+        write(plain_config_path, JSON.json(plain_cfg))
+
+        Moose.MOOSE_from_config(tiled_config_path; quiet = true)
+        Moose.MOOSE_from_config(plain_config_path; quiet = true)
+
+        tiled_root = joinpath(tiled_dir, "z", "Synchrotron")
+        tiled_result = joinpath(tiled_root, "WithFaraday")
+        plain_result = joinpath(plain_dir, "z", "Synchrotron", "WithFaraday")
+
+        # Tiled 3D products are single-file HEALPix cubes.
+        for name in ("ne",)
+            @test isfile(joinpath(tiled_root, "$(name).fits"))
+        end
+        for name in ("Qnu", "Unu", "Tnu", "Pnu", "FDF", "realFDF", "imagFDF")
+            @test isfile(joinpath(tiled_result, "$(name).fits"))
+        end
+        for name in ("intBtotal", "intne", "sigmaT")
+            @test isfile(joinpath(tiled_root, "$(name).fits"))
+        end
+        for name in ("RMmap", "Pnumax", "Pmax", "alpha", "alpha_err", "RMSF")
+            @test isfile(joinpath(tiled_result, "$(name).fits"))
+        end
+
+        # Tiled values match the non-tiled reference run.
+        q_cube, q_freqs = Moose.read_healpix_cube(joinpath(tiled_result, "Qnu.fits"))
+        @test size(q_cube.pixels) == (12, 2)
+        @test q_freqs ≈ [1.0e8, 1.01e8]
+        q_plain_1 = Moose.read_healpix_map(joinpath(plain_result, "Qnu_0001_p1p0e8.fits"))
+        q_plain_2 = Moose.read_healpix_map(joinpath(plain_result, "Qnu_0002_p1p01e8.fits"))
+        @test q_cube.pixels[:, 1] ≈ collect(q_plain_1) rtol = 1e-10
+        @test q_cube.pixels[:, 2] ≈ collect(q_plain_2) rtol = 1e-10
+
+        fdf_cube, fdf_phi = Moose.read_healpix_cube(joinpath(tiled_result, "FDF.fits"))
+        @test size(fdf_cube.pixels) == (12, 3)
+        @test fdf_phi ≈ [-2.0, 0.0, 2.0]
+        fdf_plain_2 = Moose.read_healpix_map(joinpath(plain_result, "FDF_0002_p0p0.fits"))
+        @test fdf_cube.pixels[:, 2] ≈ collect(fdf_plain_2) rtol = 1e-10
+
+        int_tiled = Moose.read_healpix_stack(joinpath(tiled_root, "intBtotal.fits"))
+        int_plain = Moose.read_healpix_stack(joinpath(plain_dir, "z", "Synchrotron", "intBtotal.fits"))
+        @test int_tiled.pixels ≈ int_plain.pixels rtol = 1e-10
     end
 end
 
@@ -800,6 +1595,168 @@ end
     dirty_energy = sum(abs2, complex.(realF, imagF))
     residual_energy = sum(abs2, result.residual)
     @test residual_energy < 0.25 * dirty_energy
+end
+
+@testset "QU fitting" begin
+    nu = collect(range(1.0e9, 2.0e9, length = 64))  # Hz
+    lambda2 = (Moose.C_m ./ nu) .^ 2
+
+    # --- External Faraday screen: exact recovery without noise.
+    p0, chi0, rm = 0.7, 0.3, 15.0
+    P = @. p0 * exp(2im * (chi0 + rm * lambda2))
+    fit = Moose.QUFit(real.(P), imag.(P), nu; model = :screen)
+    @test fit.converged
+    @test isapprox(fit.params[1], p0; atol = 1e-6)
+    @test isapprox(fit.params[2], chi0; atol = 1e-6)
+    @test isapprox(fit.params[3], rm; atol = 1e-6)
+    @test fit.chi2 < 1e-10
+    @test fit.dof == 2 * length(nu) - 3
+
+    # --- Noisy external dispersion: parameters recovered within tolerance
+    # and chi2_red ≈ 1 for correctly declared uncertainties.
+    rng = Moose.Random.MersenneTwister(42)
+    sigma_rm, noise = 5.0, 0.005
+    Pd = @. p0 * exp(-2 * sigma_rm^2 * lambda2^2) * exp(2im * (chi0 + rm * lambda2))
+    qn = real.(Pd) .+ noise .* randn(rng, length(nu))
+    un = imag.(Pd) .+ noise .* randn(rng, length(nu))
+    fitd = Moose.QUFit(qn, un, nu; model = :external_dispersion,
+                       sigma_q = noise, sigma_u = noise)
+    @test isapprox(fitd.params[1], p0; atol = 0.05)
+    @test isapprox(fitd.params[2], chi0; atol = 0.05)
+    @test isapprox(fitd.params[3], rm; atol = 0.5)
+    @test isapprox(fitd.params[4], sigma_rm; atol = 0.5)
+    @test 0.5 < fitd.chi2_red < 2.0
+    @test all(isfinite, fitd.stderr)
+
+    # --- Burn slab: the sinc-like depolarization is recovered.
+    phi_slab = 40.0
+    x = phi_slab .* lambda2
+    Ps = @. p0 * (sin(x) / x) * exp(2im * (chi0 + x / 2))
+    fits = Moose.QUFit(real.(Ps), imag.(Ps), nu; model = :burn_slab)
+    @test isapprox(fits.params[1], p0; atol = 1e-4)
+    @test isapprox(fits.params[3], phi_slab; atol = 1e-3)
+
+    # --- Model comparison: BIC prefers the true (simpler) screen model.
+    qn2 = real.(P) .+ noise .* randn(rng, length(nu))
+    un2 = imag.(P) .+ noise .* randn(rng, length(nu))
+    best, results = Moose.QUFitCompare(qn2, un2, nu;
+                                       sigma_q = noise, sigma_u = noise)
+    @test best.model == :screen
+    @test length(results) == length(Moose.QU_FIT_MODELS)
+    @test all(r -> r.bic >= best.bic, values(results))
+
+    # --- Cube fitting: per-pixel maps, NaN pixels stay masked.
+    nx, ny = 2, 2
+    Qc = Array{Float64}(undef, nx, ny, length(nu))
+    Uc = similar(Qc)
+    rms = [10.0 -20.0; 5.0 0.0]
+    for j in 1:ny, i in 1:nx
+        Pij = @. p0 * exp(2im * (chi0 + rms[i, j] * lambda2))
+        Qc[i, j, :] .= real.(Pij)
+        Uc[i, j, :] .= imag.(Pij)
+    end
+    Qc[2, 2, :] .= NaN  # masked pixel (e.g. HEALPix UNSEEN)
+    Uc[2, 2, :] .= NaN
+    params, perr, chi2map = Moose.QUFitCube(Qc, Uc, nu; model = :screen)
+    @test size(params) == (nx, ny, 3)
+    @test isapprox(params[1, 1, 3], 10.0; atol = 1e-4)
+    @test isapprox(params[1, 2, 3], -20.0; atol = 1e-4)
+    @test isapprox(params[2, 1, 3], 5.0; atol = 1e-4)
+    @test all(isnan, params[2, 2, :])
+    @test isnan(chi2map[2, 2])
+    @test all(isfinite, chi2map[1:2, 1] )
+
+    # --- Validation errors.
+    @test_throws ArgumentError Moose.qu_model(:nope, [1.0], lambda2)
+    @test_throws ArgumentError Moose.QUFit(real.(P), imag.(P)[1:10], nu)
+    @test_throws ArgumentError Moose.QUFit(real.(P), imag.(P), nu; model = :nope)
+end
+
+@testset "Polarization gradient map" begin
+    nx, ny = 16, 16
+    Q = [3.0 * i for i in 1:nx, j in 1:ny]
+    U = [4.0 * j for i in 1:nx, j in 1:ny]
+
+    # Linear ramps: |∇P| = √(3² + 4²) = 5 exactly, including the edges
+    # (one-sided differences are exact on a linear field).
+    grad = Moose.polarization_gradient_map(Q, U)
+    @test all(isapprox.(grad, 5.0; atol = 1e-12))
+
+    # Physical pixel size scales the gradient.
+    grad_h = Moose.polarization_gradient_map(Q, U; pixel_size = 0.5)
+    @test all(isapprox.(grad_h, 10.0; atol = 1e-12))
+
+    # |∇P| is invariant under addition of a uniform polarized screen
+    # (the key property from Gaensler et al. 2011).
+    grad_shift = Moose.polarization_gradient_map(Q .+ 7.0, U .- 11.0)
+    @test isapprox(grad_shift, grad; atol = 1e-12)
+
+    # Masked pixels stay masked; neighbours fall back to one-sided
+    # differences and keep a finite value.
+    Qm = copy(Q); Um = copy(U)
+    Qm[8, 8] = NaN
+    gm = Moose.polarization_gradient_map(Qm, Um)
+    @test isnan(gm[8, 8])
+    @test isfinite(gm[7, 8]) && isfinite(gm[9, 8]) && isfinite(gm[8, 7])
+    @test count(isnan, gm) == 1
+
+    # Normalized variant: |∇P| / |P|.
+    gn = Moose.polarization_gradient_map(Q, U; normalized = true)
+    @test isapprox(gn[5, 5], 5.0 / hypot(Q[5, 5], U[5, 5]); atol = 1e-12)
+
+    # Cube input: channel-by-channel, same conventions as RMSynthesis.
+    Qc = cat(Q, 2 .* Q; dims = 3)
+    Uc = cat(U, 2 .* U; dims = 3)
+    gc = Moose.polarization_gradient_map(Qc, Uc)
+    @test size(gc) == (nx, ny, 2)
+    @test all(isapprox.(gc[:, :, 2], 10.0; atol = 1e-12))
+
+    @test_throws ArgumentError Moose.polarization_gradient_map(Q, U[:, 1:8])
+    @test_throws ArgumentError Moose.polarization_gradient_map(Q, U; pixel_size = 0.0)
+end
+
+@testset "Structure function" begin
+    rng = Moose.Random.MersenneTwister(7)
+    nx, ny = 64, 64
+
+    # White noise with variance σ²: SF(r) = 2σ² at every separation.
+    sigma = 1.5
+    noise = sigma .* randn(rng, nx, ny)
+    sf = Moose.structure_function(noise; npairs = 400_000, rng = rng)
+    good = sf.counts .> 2000
+    @test any(good)
+    @test all(abs.(sf.sf[good] .- 2 * sigma^2) .< 0.4 * sigma^2)
+    @test sum(sf.counts) <= sf.npairs
+    @test length(sf.separation) == length(sf.sf) == length(sf.counts) == 20
+
+    # Smooth ramp: SF grows with separation (∝ r² for a linear field).
+    ramp = [Float64(i) for i in 1:nx, j in 1:ny]
+    sfr = Moose.structure_function(ramp; max_sep = 16.0, npairs = 400_000, rng = rng)
+    populated = findall(sfr.counts .> 2000)
+    @test length(populated) >= 2
+    k1, k2 = populated[1], populated[end]
+    @test sfr.separation[k2] > 2 * sfr.separation[k1]
+    @test sfr.sf[k2] > 2 * sfr.sf[k1]
+
+    # Polarization angles: ±(π/2 − δ) are nearly parallel, so the wrapped
+    # SF must be tiny while the naive SF is of order π².
+    delta = 0.05
+    psi = [rand(rng, Bool) ? (pi / 2 - delta) : (-pi / 2 + delta) for i in 1:nx, j in 1:ny]
+    sfw = Moose.structure_function(psi; angle = true, npairs = 200_000, rng = rng)
+    sfn = Moose.structure_function(psi; angle = false, npairs = 200_000, rng = rng)
+    goodw = sfw.counts .> 2000
+    @test any(goodw)
+    @test all(sfw.sf[goodw] .< (2 * delta)^2 + 1e-6)
+    @test maximum(filter(isfinite, sfn.sf)) > 1.0
+
+    # Masked pixels are ignored; a fully masked map raises.
+    masked = copy(noise)
+    masked[:, 1:32] .= NaN
+    sfm = Moose.structure_function(masked; npairs = 100_000, rng = rng)
+    @test sum(sfm.counts) > 0
+    @test_throws ArgumentError Moose.structure_function(fill(NaN, 8, 8))
+    @test_throws ArgumentError Moose.structure_function(noise; nbins = 0)
+    @test_throws ArgumentError Moose.structure_function(noise; min_sep = 10.0, max_sep = 5.0)
 end
 
 @testset "RM-CLEAN cube and HEALPix" begin

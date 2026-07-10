@@ -125,7 +125,9 @@ T_nu = Tnu3D(Bperpcube, nuArray, df, PixelLength_cm)
 function Tnu3D(Bperpcube, nuArray, df, PixelLength_cm)
     nx, ny = size(Bperpcube, 1), size(Bperpcube, 2)
     Nfreq = length(nuArray)
-    T_nu = zeros(nx, ny, Nfreq)
+    # Output cube follows the working precision of the input cube (the
+    # per-pixel accumulation still runs in Float64 scalars).
+    T_nu = zeros(float(eltype(Bperpcube)), nx, ny, Nfreq)
     interpolator = TemperatureInterpolator(df)
     emissivity_cache = build_emissivity_frequency_cache(interpolator, nuArray)
 

@@ -54,6 +54,8 @@ const DictHeader = Dict(
     "Pmax" => header_params(naxis=2, bunit="K"),
     "Pnumax" => header_params(naxis=2, bunit="K"),
     "RMmap" => header_params(naxis=2, bunit="rad.m^{-2}"),
+    "alpha" => header_params(naxis=2, bunit=""),
+    "alpha_err" => header_params(naxis=2, bunit=""),
     "FDF" => header_params(naxis=3, ctype3="FAR-DEPTH", cunit3="rad/m^2", bunit="K"),
     "realFDF" => header_params(naxis=3, ctype3="FAR-DEPTH", cunit3="rad/m^2", bunit="K"),
     "imagFDF" => header_params(naxis=3, ctype3="FAR-DEPTH", cunit3="rad/m^2", bunit="K"),

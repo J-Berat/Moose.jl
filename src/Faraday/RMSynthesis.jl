@@ -39,12 +39,18 @@ imagF = [...]
 function RMSynthesis(Q::AbstractArray, U::AbstractArray, nuArray::AbstractArray, PhiArray::AbstractArray; log_progress::Bool = false)
 
     log_progress && @info "Starting RM synthesis" n_phi = length(PhiArray) n_lambda = length(nuArray)
-    
+
     LambdaSqArray = @. (C_m/nuArray)^2
-    
+
     nPhi = length(PhiArray)
     nLambda = length(LambdaSqArray)
     nDims = length(size(Q))
+
+    # The FDF is accumulated in the working precision of the Q/U cubes
+    # (Float64 inputs reproduce the historical behaviour bit for bit;
+    # Float32 inputs halve the memory footprint of the FDF products).
+    T = float(real(promote_type(eltype(Q), eltype(U))))
+    CT = Complex{T}
 
     K = 1.0 / nLambda
 
@@ -63,21 +69,60 @@ function RMSynthesis(Q::AbstractArray, U::AbstractArray, nuArray::AbstractArray,
     Lambda0Sq = sum(LambdaSqArray) * K
     a = (LambdaSqArray .- Lambda0Sq)
 
-    F = Matrix{ComplexF64}(undef, nx * ny, nPhi)
     Pmat = reshape(P, nx * ny, nLambda)
-    phase = Vector{ComplexF64}(undef, nLambda)
+    phase = Vector{CT}(undef, nLambda)
 
-    for i in 1:nPhi
-        phi = Float64(PhiArray[i])
-        @inbounds for l in eachindex(a)
-            phase[l] = cis(-2.0 * phi * a[l])
+    # Masked pixels (NaN from HEALPix UNSEEN or partial-sky maps) are skipped:
+    # their FDF is NaN by definition, so there is no point running the
+    # matrix product over them.
+    npix_total = nx * ny
+    valid = Vector{Bool}(undef, npix_total)
+    @inbounds for r in 1:npix_total
+        ok = true
+        for l in 1:nLambda
+            z = Pmat[r, l]
+            if !(isfinite(real(z)) && isfinite(imag(z)))
+                ok = false
+                break
+            end
         end
+        valid[r] = ok
+    end
+    nvalid = count(valid)
 
-        LinearAlgebra.mul!(view(F, :, i), Pmat, phase, K, 0.0)
-        if log_progress
-            print_progress(i, nPhi)
-            @debug "RM synthesis accumulation" idx = i total = nPhi
+    if nvalid == npix_total
+        F = Matrix{CT}(undef, npix_total, nPhi)
+        for i in 1:nPhi
+            phi = Float64(PhiArray[i])
+            @inbounds for l in eachindex(a)
+                phase[l] = CT(cis(-2.0 * phi * a[l]))
+            end
+
+            LinearAlgebra.mul!(view(F, :, i), Pmat, phase, T(K), zero(T))
+            if log_progress
+                print_progress(i, nPhi)
+                @debug "RM synthesis accumulation" idx = i total = nPhi
+            end
         end
+    else
+        log_progress && @info "Skipping masked pixels in RM synthesis" masked = npix_total - nvalid total = npix_total
+        rows = findall(valid)
+        Pvalid = Pmat[rows, :]
+        Fvalid = Matrix{CT}(undef, nvalid, nPhi)
+        for i in 1:nPhi
+            phi = Float64(PhiArray[i])
+            @inbounds for l in eachindex(a)
+                phase[l] = CT(cis(-2.0 * phi * a[l]))
+            end
+
+            LinearAlgebra.mul!(view(Fvalid, :, i), Pvalid, phase, T(K), zero(T))
+            if log_progress
+                print_progress(i, nPhi)
+                @debug "RM synthesis accumulation" idx = i total = nPhi
+            end
+        end
+        F = fill(CT(T(NaN), T(NaN)), npix_total, nPhi)
+        F[rows, :] = Fvalid
     end
 
     F = reshape(F, nx, ny, nPhi)

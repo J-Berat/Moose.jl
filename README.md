@@ -26,9 +26,13 @@
 ## Main features
 - Compute synchrotron Stokes parameters **I**, **Q**, and **U** with optional Faraday rotation and filtering.
 - Run **Rotation Measure Synthesis (RM Synthesis)** to explore Faraday depth structure.
+- Fit physical Faraday models directly to `q(λ²)`/`u(λ²)` spectra (**QU fitting**: external screen, Burn slab, external/internal Faraday dispersion) with AIC/BIC model selection, per spectrum or per pixel.
 - Generate Faraday dispersion functions, polarization angles, and derived statistics.
+- Turbulence diagnostics: polarization gradient maps **|∇P|** (Gaensler et al. 2011) and isotropic **structure functions** of RM or polarization-angle maps (π-ambiguity aware).
+- Produce per-pixel **spectral index maps** (`alpha.fits`, `alpha_err.fits`) from the multi-frequency intensity cube via a log-log least-squares fit.
 - Configure instrumental parameters (frequency coverage, box size, interferometric Fourier filtering) interactively.
 - Run either interactively (`run_moose`) or non-interactively from JSON config (`src/MOOSE_cli.jl` / `MOOSE_from_config`).
+- Generate a self-contained **demo dataset with analytically known results** (`make_demo_data`) to validate an installation end to end.
 
 ---
 
@@ -51,6 +55,17 @@ julia --startup-file=no --project -e 'using Pkg; Pkg.instantiate(); using Moose;
 ```
 
 This installs dependencies, precompiles the package, and prints the interactive help without requiring any input data. Once that succeeds, move on to preparing your simulation directory and running the standard workflow in [Usage](#usage).
+
+### Demo dataset with known results
+To run the full pipeline without any real simulation data, generate the built-in demo dataset and process it:
+
+```julia
+using Moose
+demo = make_demo_data("moose_demo")
+MOOSE_from_config(demo.config_path; quiet = true)
+```
+
+The demo is a Faraday screen in front of a uniform power-law emitter, built so that every output is **analytically known**: `demo.expected` holds the exact values (`rm` for `RMmap.fits`, `alpha` for `alpha.fits`, `Tnu` per channel, `qnu_over_tnu`/`unu_over_tnu`, the polarization fraction, `intne`, `intBLOS`, and the FDF peak position). The same values are written to `moose_demo/expected_results.json` so you can compare the generated FITS products against them by hand. If they match, your installation is processing data correctly end to end.
 
 ---
 
@@ -182,7 +197,12 @@ The stable Julia API is the set of names exported by `using Moose`:
 - `MOOSE_from_config` for JSON-driven batch runs.
 - `MooseError`, `cli_error`, and `config_error` for user-facing failures.
 - Faraday tomography: `RMClean`, `RMCleanHealpix`, `RMCleanAuto`, `RMCleanResult`, `rmsf_diagnostics`, `RMSFDiagnostics`, and `write_rmsf`.
-- HEALPix helpers: `HealpixStack`, `HealpixRMResult`, `RMSynthesisHealpix`, `RMSynthesisAuto`, `healpix_map`, `healpix_maps_from_stack`, `detect_fits_grid`, `is_healpix_fits`, `is_image_fits`, `read_fits_grid`, `read_fits_grid_stack`, `read_healpix_map`, `read_healpix_stack`, `write_healpix_map`, `write_healpix_stack`, and `write_healpix_rm_result`.
+- QU fitting: `QUFit` (single spectrum), `QUFitCompare` (fit all models, rank by BIC), `QUFitCube` (per-pixel parameter/uncertainty/χ²red maps, NaN-masked pixels skipped), `QUFitResult`, `qu_model`, and `QU_FIT_MODELS` (`:screen`, `:burn_slab`, `:external_dispersion`, `:internal_dispersion`). Inputs follow the `RMSynthesis` conventions (frequency in Hz on the last axis); optional `sigma_q`/`sigma_u` uncertainties weight the fit and calibrate `chi2_red` and parameter errors.
+- Spectral index: `spectral_index_map` for per-pixel log-log power-law fits of intensity cubes.
+- Turbulence diagnostics: `polarization_gradient_map` (per-map or per-channel `|∇P|`, optional `normalized=|∇P|/|P|`, `pixel_size` scaling, NaN-masked pixels preserved) and `structure_function` / `StructureFunctionResult` (Monte-Carlo pair sampling with logarithmic separation bins; pass `angle=true` for polarization-angle maps so differences are wrapped modulo π; seedable `rng` for reproducibility).
+- Demo dataset: `make_demo_data` to generate a synthetic quickstart dataset with analytically known results.
+- HEALPix helpers: `HealpixStack`, `HealpixRMResult`, `RMSynthesisHealpix`, `RMSynthesisAuto`, `healpix_map`, `healpix_maps_from_stack`, `detect_fits_grid`, `is_healpix_fits`, `is_image_fits`, `read_fits_grid`, `read_fits_grid_stack`, `read_healpix_map`, `read_healpix_stack`, `read_healpix_cube`, `write_healpix_map`, `write_healpix_stack`, `write_healpix_cube`, `write_healpix_rm_result`, `healpix_udgrade`, `healpix_reorder`, `healpix_smooth`, and `HEALPIX_UNSEEN`. Masked pixels (UNSEEN sentinel) are converted to `NaN` when reading stacks and back to the sentinel on write (opt out with `unseen_to_nan`/`nan_to_unseen`); masked pixels are skipped by RM synthesis and RM-CLEAN. `COORDSYS` metadata is preserved end-to-end, and `write_healpix_stack`/`write_healpix_rm_result` accept `format=:cube` to write a single multi-slice FITS file (with a `COORDS` extension) instead of one file per slice. Simulation fields with mismatched NSIDE or ordering are automatically conformed (with a warning) to the `Bx` reference grid via `healpix_udgrade`/`healpix_reorder`; `healpix_smooth` applies a Gaussian beam in spherical-harmonic space (`fwhm_arcmin`/`fwhm_deg`/`fwhm_rad`, NaN-aware masked smoothing). `tile_size` also works with HEALPix inputs (single-column HEALPix tables): the sky is processed in bands of HEALPix pixel rows and 3D products are streamed as single-file HEALPix cubes.
+- **HEALPix vector-field convention (important):** for HEALPix simulations the line of sight is the local radial direction of each pixel, so only `LOS = "z"` is accepted (`"x"`/`"y"` raise a config error). The `Bx`/`By`/`Bz` (and `Vx`/`Vy`/`Vz`) FITS inputs must contain the **per-pixel tangent-basis components** — `Bx = B·e_θ` (colatitude), `By = B·e_φ` (azimuth), `Bz = B·e_r` (radial/LOS) — not global cartesian components. The intrinsic polarization angle `ψ = atan(B2, B1) + π/2` is then measured in the local `(e_θ, e_φ)` basis. If your simulation stores global cartesian vectors, project them onto each pixel's tangent basis before writing the FITS files.
 
 Other qualified names such as `Moose.RMS`, `Moose.Pnu`, or `Moose.buildHeader3D` are internal implementation details. They are tested for regression coverage, but they are not yet promised as stable external API.
 
@@ -246,14 +266,24 @@ Notes:
 - RM-CLEAN requires Faraday rotation to be enabled and a uniformly spaced Faraday-depth grid.
 - Box lengths are in parsec and pixel counts are dimensionless.
 
+### Performance options (opt-in)
+Two optional keys control the memory footprint of large runs; both default to the historical behaviour when omitted:
+
+- `"precision": "float32"` processes and stores the cubes in single precision, halving the steady-state RAM and the size of the FITS products. Per-pixel accumulations still run in double precision, so the loss of accuracy is negligible for mock-observation work (relative errors ~1e-7). The default is `"float64"`. The FITS headers record the choice in the `PRECIS` keyword. Not supported with HEALPix inputs. RM-CLEAN products are not reduced.
+- `"tile_size": N` processes the sky plane in bands of `N` rows: input cubes are read from FITS one band at a time and the 3D products (`Qnu`, `Unu`, `Tnu`, `Pnu`, `ne`, FDF cubes) are streamed to disk band by band, so cubes much larger than the available RAM can be processed. The per-pixel math is identical to a plain run, so results match exactly. Recorded in the `TILESIZE` header keyword. Limitations: cartesian grids only, and incompatible with interferometric filtering (`responseSynchrotron`, needs the full sky plane in Fourier space), noise injection (`add_noise`, the per-channel σ derives from the full-map rms), and RM-CLEAN; the polarization diagnostic plots are skipped in tiled runs. Both options combine (`"precision": "float32"` + `"tile_size": N`).
+
+The equivalent CLI flags are `--precision float32` and `--tile-size N` (Julia CLI and Python front-end).
+
 ---
 
 ## Input data requirements
-MOOSE expects simulation outputs in a directory containing the following FITS cubes with these exact filenames:
-- `Bx.fits`, `By.fits`, `Bz.fits`: magnetic field components (µG).
-- `density.fits`: neutral hydrogen number density (cm⁻³).
-- `temperature.fits`: gas temperature (K).
-- `densityHp.fits`: optional electron density cube when providing `n_e` directly; otherwise it is derived from prescriptions you choose during prompts.
+MOOSE expects simulation outputs in a directory containing the following regular cubes as FITS or HDF5 files:
+- `Bx.fits`, `By.fits`, `Bz.fits` (or `.h5`/`.hdf5`): magnetic field components (µG).
+- `density.fits` (or `.h5`/`.hdf5`): neutral hydrogen number density (cm⁻³).
+- `temperature.fits` (or `.h5`/`.hdf5`): gas temperature (K).
+- `densityHp.fits` (or `.h5`/`.hdf5`): optional electron density cube when providing `n_e` directly; otherwise it is derived from prescriptions you choose during prompts.
+
+For one-file-per-field HDF5 inputs, each file may contain a single numeric dataset, or a dataset named after the field (for example `Bx` inside `Bx.h5`). You can also store all fields in one shared `.h5`/`.hdf5` file; MOOSE will look for datasets named `Bx`, `By`, `Bz`, `density`, `temperature`, and the optional density fields, including inside groups such as `/fields/Bx`.
 
 Rename your files before running if they use different names, for example:
 ```bash
@@ -354,7 +384,8 @@ When enabled, the pipeline writes `cleanFDF.fits`, `realCleanFDF.fits`, `imagCle
 
 ## Outputs
 - Processed maps (Stokes parameters, RM maps, Faraday dispersion functions) are written alongside the simulations you choose.
-- Each synchrotron output directory also includes polarization diagnostic PNGs for the brightest `Pnumax` sightline: `polarization_angle_vs_lambda2.png`, `fractional_polarization_vs_lambda2.png`, and `stokes_qu_diagram.png`.
+- Each synchrotron output directory includes a spectral index map `alpha.fits` and its 1σ uncertainty `alpha_err.fits`, from a per-pixel log-log least-squares fit of the brightness-temperature cube `Tnu`. The map uses the flux-density convention `S_ν ∝ ν^α` (`α = β_T + 2`, recorded in the `ALPHADEF` header keyword); the uncertainty is `NaN` when only two frequency channels are available (no residual degrees of freedom).
+- Each synchrotron output directory also includes polarization diagnostics for the brightest `Pnumax` sightline: individual PNGs (`polarization_angle_vs_lambda2.png`, `fractional_polarization_vs_lambda2.png`, `stokes_qu_diagram.png`) plus a publication-ready composite as `polarization_diagnostics.png` and `polarization_diagnostics.pdf`.
 - When Faraday rotation is enabled, an `RMSF.fits` file is written next to the FDF products, holding the complex RMSF (`|R|`, `Re R`, `Im R`) and the resolution metrics (`RMSFFWHM`, `RMSFTHEO`, `PHIMAX`, `MAXSCALE`) in its header.
 - When RM-CLEAN is enabled, restored and residual FDF products are written as `cleanFDF`, `realCleanFDF`, `imagCleanFDF`, and `residualFDF`.
 - HEALPix RM-synthesis outputs are written as one standard HEALPix FITS map per Faraday-depth slice.
