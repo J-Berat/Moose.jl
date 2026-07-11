@@ -44,6 +44,15 @@ class MooseFrontendStateTests(unittest.TestCase):
                 "float32",
                 "--tile-size",
                 "64",
+                "--resume",
+                "safe",
+                "--plan",
+                "--density-kind",
+                "mass_density",
+                "--mean-molecular-weight",
+                "1.4",
+                "--hydrogen-mass-g",
+                "1.6726231e-24",
                 "--quiet",
             ]
         )
@@ -57,6 +66,12 @@ class MooseFrontendStateTests(unittest.TestCase):
                 "x",
                 "--los",
                 "y",
+                "--density-kind",
+                "mass_density",
+                "--mean-molecular-weight",
+                "1.4",
+                "--hydrogen-mass-g",
+                "1.6726231e-24",
                 "--faraday",
                 "Y",
                 "--phimin",
@@ -69,7 +84,10 @@ class MooseFrontendStateTests(unittest.TestCase):
                 "float32",
                 "--tile-size",
                 "64",
+                "--resume",
+                "safe",
                 "--quiet",
+                "--plan",
             ],
         )
 
@@ -93,6 +111,8 @@ class MooseFrontendStateTests(unittest.TestCase):
 
         self.assertIn("Julia command:", stdout.getvalue())
         self.assertIn("definitely-not-installed-julia", stdout.getvalue())
+        self.assertIn(f"--project={moose_frontend.REPO_ROOT}", stdout.getvalue())
+        self.assertIn(str(moose_frontend.JULIA_ENTRYPOINT), stdout.getvalue())
 
     def test_dry_run_logs_composed_command(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

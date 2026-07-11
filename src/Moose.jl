@@ -83,7 +83,7 @@ using .MooseFromConfig: MOOSE_from_config
 # Stable public API: names exported below are the compatibility surface. Other
 # `Moose.foo` bindings are implementation details, even when regression tests
 # exercise them through qualified access.
-export run_moose, MOOSE_from_config, MooseError, cli_error, config_error,
+export run_moose, MOOSE_from_config, preflight_plan, MooseError, cli_error, config_error,
        HealpixStack, HealpixRMResult, RMSynthesisHealpix, healpix_map,
        healpix_maps_from_stack, read_healpix_map, read_healpix_stack,
        detect_fits_grid, is_healpix_fits, is_image_fits,

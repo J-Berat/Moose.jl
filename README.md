@@ -211,7 +211,7 @@ Other qualified names such as `Moose.RMS`, `Moose.Pnu`, or `Moose.buildHeader3D`
 ## Recommendations
 - **Start with the smoke test** before pointing to simulation data so you know the environment is healthy and dependencies are precompiled.
 - **Keep `moose_config.json` under version control** (or copy it alongside each dataset) to reuse validated parameter choices and document the provenance of your outputs.
-- **Name FITS files exactly as expected** (`Bx.fits`, `By.fits`, `Bz.fits`, `density.fits`, `temperature.fits`, `densityHp.fits`) to avoid interactive prompts failing on missing inputs.
+- **Use the default field names or configure `field_sources`** for inputs named differently from `Bx`, `By`, `Bz`, `density`, `temperature`, and optional `densityHp`.
 - **Record the `MOOSE_summary.log` and generated FITS products together** so downstream analysis can reference both the data and the processing history.
 - **Use the CLI for repeatable runs** (`julia --project src/MOOSE_cli.jl <config>.json`) and reserve the interactive session for initial exploration or parameter tuning.
 - **Run on datasets stored locally** when possible; large FITS cubes streamed over networked filesystems can slow down interpolation and Faraday synthesis steps.
@@ -227,7 +227,7 @@ Other qualified names such as `Moose.RMS`, `Moose.Pnu`, or `Moose.buildHeader3D`
    python3 python/moose_frontend.py --config cfg.json --print-command --dry-run
    ```
 4. Keep one folder per dataset, storing together: `config.json`, `MOOSE_summary.log`, and the generated FITS outputs.
-5. Verify required input filenames before running: `Bx.fits`, `By.fits`, `Bz.fits`, `density.fits`, `temperature.fits`, `densityHp.fits`.
+5. Verify required input field sources before running: either the default names (`Bx.fits`, `By.fits`, `Bz.fits`, `density.fits`, `temperature.fits`, optional `densityHp.fits`) or the matching `field_sources` entries in your config.
 
 ---
 
@@ -254,6 +254,9 @@ Other qualified names such as `Moose.RMS`, `Moose.Pnu`, or `Moose.buildHeader3D`
    - `emissivity.path`
    - `ne.mode|ion_fraction`
    - `rng_seed` for reproducible noise injection
+   - `field_sources.Bx|By|Bz|density|temperature|densityHp` to map canonical field names to custom file names or HDF5 datasets
+   - `physical_mask.T_min|T_max|n_min|n_max` to exclude cells outside selected temperature/density ranges
+   - `density_kind`, `mean_molecular_weight`, and `hydrogen_mass_g` to interpret `density` as either number density or mass density
 
 Notes:
 - `base_dir` is required.
@@ -265,14 +268,22 @@ Notes:
 - Faraday depth values are in `rad/m^2`.
 - RM-CLEAN requires Faraday rotation to be enabled and a uniformly spaced Faraday-depth grid.
 - Box lengths are in parsec and pixel counts are dimensionless.
+- Field source paths are resolved relative to each simulation directory unless absolute. For HDF5, use `{"file": "simulation.h5", "dataset": "group/name"}` when the dataset is not named after the canonical field.
+- Physical mask thresholds are applied after unit conversions: `T_*` is in K and `n_*` is the MOOSE number density `n` in `cm^-3`.
+- With `"density_kind": "number_density"` (default), `conversionn` converts the input `density` values directly to `cm^-3`. With `"density_kind": "mass_density"`, `conversionn` converts the input `density` values to `g cm^-3`, then MOOSE computes `nH = rho / (mean_molecular_weight * hydrogen_mass_g)`.
 
 ### Performance options (opt-in)
 Two optional keys control the memory footprint of large runs; both default to the historical behaviour when omitted:
 
 - `"precision": "float32"` processes and stores the cubes in single precision, halving the steady-state RAM and the size of the FITS products. Per-pixel accumulations still run in double precision, so the loss of accuracy is negligible for mock-observation work (relative errors ~1e-7). The default is `"float64"`. The FITS headers record the choice in the `PRECIS` keyword. Not supported with HEALPix inputs. RM-CLEAN products are not reduced.
-- `"tile_size": N` processes the sky plane in bands of `N` rows: input cubes are read from FITS one band at a time and the 3D products (`Qnu`, `Unu`, `Tnu`, `Pnu`, `ne`, FDF cubes) are streamed to disk band by band, so cubes much larger than the available RAM can be processed. The per-pixel math is identical to a plain run, so results match exactly. Recorded in the `TILESIZE` header keyword. Limitations: cartesian grids only, and incompatible with interferometric filtering (`responseSynchrotron`, needs the full sky plane in Fourier space), noise injection (`add_noise`, the per-channel σ derives from the full-map rms), and RM-CLEAN; the polarization diagnostic plots are skipped in tiled runs. Both options combine (`"precision": "float32"` + `"tile_size": N`).
+- `"tile_size": N` processes the sky plane in bands of `N` rows: input cubes are read from FITS one band at a time and the 3D products (`Qnu`, `Unu`, `Tnu`, `Pnu`, `polfrac`, `ne`, FDF cubes) are streamed to disk band by band, so cubes much larger than the available RAM can be processed. The per-pixel math is identical to a plain run, so results match exactly. Recorded in the `TILESIZE` header keyword. Limitations: incompatible with interferometric filtering (`responseSynchrotron`, needs the full sky plane in Fourier space), noise injection (`add_noise`, the per-channel σ derives from the full-map rms), and RM-CLEAN; the polarization diagnostic plots are skipped in tiled runs. Both options combine for cartesian grids (`"precision": "float32"` + `"tile_size": N`).
 
 The equivalent CLI flags are `--precision float32` and `--tile-size N` (Julia CLI and Python front-end).
+
+Use `--plan` with either CLI to validate all required simulation fields and their dimensions without loading full cubes or producing outputs. The preflight report lists frequency/Faraday channel counts and per-LOS estimates for peak working RAM, FITS data volume, and cell-channel workload. Estimates intentionally exclude allocator overhead, plots, FITS headers, FFT workspace, and RM-CLEAN iteration cost.
+
+- `"resume": "safe"` writes an atomic `.moose-complete.json` manifest after each simulation/LOS finishes. A later run skips that unit only when its processing configuration, input file size/timestamps, and declared FITS outputs still match. The default is `"off"`; use `--resume safe` from either CLI. Safe resume is rejected when noise injection is enabled because skipping work would otherwise alter the shared random-number sequence.
+- `"outputs": ["integrated", "rm"]` restricts processing and writes to selected product groups. Available groups are `integrated` (electron-density and LOS summary maps), `stokes` (Q/U/T/P cubes and polarization fractions), `rm` (RM map), `fdf` (Faraday dispersion products and RMSF), `spectral_index` (alpha maps), and `diagnostics` (polarization plots). The default `["all"]` preserves the complete legacy run. Derived groups compute required intermediates without writing unrequested prerequisite products. Use `--outputs rm,fdf` from either CLI. `rm`/`fdf` require Faraday rotation, RM-CLEAN requires `fdf`, and selective groups are currently unavailable with tiled processing.
 
 ---
 
@@ -283,12 +294,52 @@ MOOSE expects simulation outputs in a directory containing the following regular
 - `temperature.fits` (or `.h5`/`.hdf5`): gas temperature (K).
 - `densityHp.fits` (or `.h5`/`.hdf5`): optional electron density cube when providing `n_e` directly; otherwise it is derived from prescriptions you choose during prompts.
 
+**Warning:** `density` means number density `n` in the MOOSE equations by default, not mass density `rho`. If your simulation stores mass density, set `density_kind` explicitly:
+
+```json
+"density_kind": "mass_density",
+"mean_molecular_weight": 1.4,
+"hydrogen_mass_g": 1.6726231e-24
+```
+
+In this mode, `conversionn` must convert the on-disk mass density to `g cm^-3`; MOOSE then computes `nH = rho / (mean_molecular_weight * hydrogen_mass_g)`. `densityHp`, when provided for `ne_option = 3`, remains an electron number-density cube.
+
+To exclude cells outside a physical phase or trusted range, add a `physical_mask` block. Masked cells contribute zero to synchrotron emission, Faraday rotation, and LOS-integrated quantities:
+
+```json
+"physical_mask": {
+  "T_min": 100.0,
+  "T_max": 1000000.0,
+  "n_min": 0.001,
+  "n_max": 10.0
+}
+```
+
+Aliases such as `temperature_min`, `temperature_max`, `density_min`, `density_max`, `nH_min`, and `nH_max` are also accepted in config files.
+
 For one-file-per-field HDF5 inputs, each file may contain a single numeric dataset, or a dataset named after the field (for example `Bx` inside `Bx.h5`). You can also store all fields in one shared `.h5`/`.hdf5` file; MOOSE will look for datasets named `Bx`, `By`, `Bz`, `density`, `temperature`, and the optional density fields, including inside groups such as `/fields/Bx`.
 
-Rename your files before running if they use different names, for example:
-```bash
-mv mag_field_x.fits Bx.fits
-mv n.fits density.fits
+If your files use different names, add a `field_sources` mapping to the config instead of renaming them:
+```json
+"field_sources": {
+  "Bx": "mag_field_x.fits",
+  "By": "mag_field_y.fits",
+  "Bz": "mag_field_z.fits",
+  "density": "nH.fits",
+  "temperature": "thermal.fits",
+  "densityHp": "electron_density.fits"
+}
+```
+
+For shared HDF5 files with arbitrary dataset names:
+```json
+"field_sources": {
+  "Bx": {"file": "simulation.h5", "dataset": "fields/mag_x"},
+  "By": {"file": "simulation.h5", "dataset": "fields/mag_y"},
+  "Bz": {"file": "simulation.h5", "dataset": "fields/mag_z"},
+  "density": {"file": "simulation.h5", "dataset": "gas/nH"},
+  "temperature": {"file": "simulation.h5", "dataset": "gas/temp"}
+}
 ```
 
 ### HEALPix maps
@@ -385,6 +436,7 @@ When enabled, the pipeline writes `cleanFDF.fits`, `realCleanFDF.fits`, `imagCle
 ## Outputs
 - Processed maps (Stokes parameters, RM maps, Faraday dispersion functions) are written alongside the simulations you choose.
 - Each synchrotron output directory includes a spectral index map `alpha.fits` and its 1σ uncertainty `alpha_err.fits`, from a per-pixel log-log least-squares fit of the brightness-temperature cube `Tnu`. The map uses the flux-density convention `S_ν ∝ ν^α` (`α = β_T + 2`, recorded in the `ALPHADEF` header keyword); the uncertainty is `NaN` when only two frequency channels are available (no residual degrees of freedom).
+- Each synchrotron output directory includes the polarization fraction cube `polfrac.fits` (`Pnu/Tnu`) and the map `polfracmax.fits`, the maximum finite polarization fraction over the frequency axis. Pixels with non-positive or non-finite `Tnu` are written as `NaN`.
 - Each synchrotron output directory also includes polarization diagnostics for the brightest `Pnumax` sightline: individual PNGs (`polarization_angle_vs_lambda2.png`, `fractional_polarization_vs_lambda2.png`, `stokes_qu_diagram.png`) plus a publication-ready composite as `polarization_diagnostics.png` and `polarization_diagnostics.pdf`.
 - When Faraday rotation is enabled, an `RMSF.fits` file is written next to the FDF products, holding the complex RMSF (`|R|`, `Re R`, `Im R`) and the resolution metrics (`RMSFFWHM`, `RMSFTHEO`, `PHIMAX`, `MAXSCALE`) in its header.
 - When RM-CLEAN is enabled, restored and residual FDF products are written as `cleanFDF`, `realCleanFDF`, `imagCleanFDF`, and `residualFDF`.

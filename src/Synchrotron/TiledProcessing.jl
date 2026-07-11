@@ -75,8 +75,8 @@ function _open_tiled_cube(file)
     error("No 3D image HDU found in $(file); `tile_size` requires plain 3D FITS cubes.")
 end
 
-function _tiled_field_handle(simu, field)
-    source = simulation_field_source(simu, field)
+function _tiled_field_handle(simu, field; field_sources=nothing)
+    source = simulation_field_source(simu, field, field_sources)
     source isa AbstractString ||
         throw_config_error("`tile_size` requires each simulation field to be a single FITS cube; $(field) resolves to multiple files.";
             code=:invalid_tile_size)
@@ -339,6 +339,11 @@ function _process_synchrotron_tiled_healpix(
     tile_rows::Int,
     resultspath::AbstractString,
     hp_meta,
+    field_sources=nothing,
+    physical_mask=nothing,
+    density_kind::AbstractString="number_density",
+    mean_molecular_weight::Real=1.0,
+    hydrogen_mass_g::Real=M_p,
 )
     faraday_enabled = uppercase(FaradayRotation) == "Y"
 
@@ -347,12 +352,12 @@ function _process_synchrotron_tiled_healpix(
 
     try
         fields = ["Bx", "By", "Bz", "density", "temperature"]
-        nHp_file = simulation_field_source(simu, "densityHp")
+        nHp_file = simulation_field_source(simu, "densityHp", field_sources)
         has_nHp = nHp_file isa AbstractString && isfile(nHp_file)
         has_nHp && push!(fields, "densityHp")
 
         for field in fields
-            source = simulation_field_source(simu, field)
+            source = simulation_field_source(simu, field, field_sources)
             source isa AbstractString || throw_config_error(
                 "`tile_size` with HEALPix inputs requires each simulation field to be a single FITS file; $(field) resolves to multiple files.";
                 code=:invalid_tile_size)
@@ -392,7 +397,7 @@ function _process_synchrotron_tiled_healpix(
         maps2d = Dict{String, Vector{Float64}}(
             name => Vector{Float64}(undef, npix) for name in
             ("intBtotal", "sigmaBtotal", "intne", "sigmane", "sigmaT",
-             "intBLOS", "sigmaBLOS", "intBperp", "Pnumax", "alpha", "alpha_err")
+             "intBLOS", "sigmaBLOS", "intBperp", "Pnumax", "polfracmax", "alpha", "alpha_err")
         )
         faraday_enabled && (maps2d["RMmap"] = Vector{Float64}(undef, npix))
         faraday_enabled && (maps2d["Pmax"] = Vector{Float64}(undef, npix))
@@ -407,7 +412,8 @@ function _process_synchrotron_tiled_healpix(
         u_stream = _streamed_healpix_cube(resultspath, "Unu", npix, nuArray_Hz, hp_meta)
         t_stream = _streamed_healpix_cube(resultspath, "T_nu", npix, nuArray_Hz, hp_meta; filename = "Tnu.fits")
         p_stream = _streamed_healpix_cube(resultspath, "Pnu", npix, nuArray_Hz, hp_meta)
-        append!(streams, (q_stream, u_stream, t_stream, p_stream))
+        polfrac_stream = _streamed_healpix_cube(resultspath, "polfrac", npix, nuArray_Hz, hp_meta)
+        append!(streams, (q_stream, u_stream, t_stream, p_stream, polfrac_stream))
 
         fdf_streams = nothing
         if faraday_enabled
@@ -430,6 +436,8 @@ function _process_synchrotron_tiled_healpix(
             T = _read_healpix_band(handles["temperature"], jr, conversionT)
             n = _read_healpix_band(handles["density"], jr, conversionn)
             nHp = has_nHp ? _read_healpix_band(handles["densityHp"], jr, conversionn) : nothing
+            _density_to_number_density!(n, density_kind, mean_molecular_weight, hydrogen_mass_g)
+            _apply_physical_mask!(B1, B2, BLOS, T, n, nHp, physical_mask)
 
             ne = electron_density_builder(T, n, nHp)
             ne_stream === nothing || _write_healpix_band!(ne_stream, ne, jr)
@@ -477,8 +485,12 @@ function _process_synchrotron_tiled_healpix(
 
             Pband = Pnu(Qband, Uband)
             maps2d["Pnumax"][jr] = vec(maxCube(Pband))
+            polfracband = PolarizationFraction(Pband, Tband)
+            maps2d["polfracmax"][jr] = vec(_max_finite_cube(polfracband))
             _write_healpix_band!(p_stream, Pband, jr)
+            _write_healpix_band!(polfrac_stream, polfracband, jr)
             Pband = nothing
+            polfracband = nothing
 
             if Nfreq >= 2
                 beta, alpha_err = spectral_index_map(Tband, nuArray; min_channels = 2)
@@ -512,6 +524,7 @@ function _process_synchrotron_tiled_healpix(
         end
         faraday_enabled && _write_healpix_map_quantity(resultspath, maps2d["RMmap"], "RMmap", hp_meta)
         _write_healpix_map_quantity(resultspath, maps2d["Pnumax"], "Pnumax", hp_meta)
+        _write_healpix_map_quantity(resultspath, maps2d["polfracmax"], "polfracmax", hp_meta)
         faraday_enabled && _write_healpix_map_quantity(resultspath, maps2d["Pmax"], "Pmax", hp_meta)
         _write_healpix_map_quantity(resultspath, maps2d["alpha"], "alpha", hp_meta)
         _write_healpix_map_quantity(resultspath, maps2d["alpha_err"], "alpha_err", hp_meta)
@@ -563,6 +576,11 @@ function _process_synchrotron_tiled(
     float_type::Type{<:AbstractFloat},
     tile_rows::Int,
     resultspath::AbstractString,
+    field_sources=nothing,
+    physical_mask=nothing,
+    density_kind::AbstractString="number_density",
+    mean_molecular_weight::Real=1.0,
+    hydrogen_mass_g::Real=M_p,
 )
     faraday_enabled = uppercase(FaradayRotation) == "Y"
     fits_metadata = copy(fits_metadata)
@@ -573,9 +591,9 @@ function _process_synchrotron_tiled(
 
     try
         for field in ("Bx", "By", "Bz", "density", "temperature")
-            handles[field] = _tiled_field_handle(simu, field)
+            handles[field] = _tiled_field_handle(simu, field; field_sources = field_sources)
         end
-        nHp_file = simulation_field_source(simu, "densityHp")
+        nHp_file = simulation_field_source(simu, "densityHp", field_sources)
         has_nHp = nHp_file isa AbstractString && isfile(nHp_file)
         if has_nHp
             handles["densityHp"] = _open_tiled_cube(nHp_file)
@@ -614,7 +632,7 @@ function _process_synchrotron_tiled(
         maps2d = Dict{String, Matrix{Float64}}(
             name => Matrix{Float64}(undef, n1, n2) for name in
             ("intBtotal", "sigmaBtotal", "intne", "sigmane", "sigmaT",
-             "intBLOS", "sigmaBLOS", "intBperp", "Pnumax", "alpha", "alpha_err")
+             "intBLOS", "sigmaBLOS", "intBperp", "Pnumax", "polfracmax", "alpha", "alpha_err")
         )
         faraday_enabled && (maps2d["RMmap"] = Matrix{Float64}(undef, n1, n2))
         faraday_enabled && (maps2d["Pmax"] = Matrix{Float64}(undef, n1, n2))
@@ -629,7 +647,8 @@ function _process_synchrotron_tiled(
         u_stream = _streamed_cube(resultspath, "Unu", (n1, n2, Nfreq), nuArray_Hz, float_type; metadata = fits_metadata)
         t_stream = _streamed_cube(resultspath, "T_nu", (n1, n2, Nfreq), nuArray_Hz, float_type; metadata = fits_metadata, filename = "Tnu.fits")
         p_stream = _streamed_cube(resultspath, "Pnu", (n1, n2, Nfreq), nuArray_Hz, float_type; metadata = fits_metadata)
-        append!(streams, (q_stream, u_stream, t_stream, p_stream))
+        polfrac_stream = _streamed_cube(resultspath, "polfrac", (n1, n2, Nfreq), nuArray_Hz, float_type; metadata = fits_metadata)
+        append!(streams, (q_stream, u_stream, t_stream, p_stream, polfrac_stream))
 
         fdf_streams = nothing
         if faraday_enabled
@@ -653,6 +672,8 @@ function _process_synchrotron_tiled(
             T = _read_band(handles["temperature"][2], LOS, jr, conversionT, float_type)
             n = _read_band(handles["density"][2], LOS, jr, conversionn, float_type)
             nHp = has_nHp ? _read_band(handles["densityHp"][2], LOS, jr, conversionn, float_type) : nothing
+            _density_to_number_density!(n, density_kind, mean_molecular_weight, hydrogen_mass_g)
+            _apply_physical_mask!(B1, B2, BLOS, T, n, nHp, physical_mask)
 
             ne = _to_precision(float_type, electron_density_builder(T, n, nHp))
             ne_stream === nothing || _write_band!(ne_stream, ne, jr)
@@ -700,8 +721,12 @@ function _process_synchrotron_tiled(
 
             Pband = Pnu(Qband, Uband)
             maps2d["Pnumax"][:, jr] = maxCube(Pband)
+            polfracband = PolarizationFraction(Pband, Tband)
+            maps2d["polfracmax"][:, jr] = _max_finite_cube(polfracband)
             _write_band!(p_stream, Pband, jr)
+            _write_band!(polfrac_stream, polfracband, jr)
             Pband = nothing
+            polfracband = nothing
 
             if Nfreq >= 2
                 beta, alpha_err = spectral_index_map(Tband, nuArray; min_channels = 2)
@@ -735,6 +760,7 @@ function _process_synchrotron_tiled(
         end
         faraday_enabled && WriteData2D(resultspath, maps2d["RMmap"], "RMmap"; ensure_path = false, metadata = fits_metadata)
         WriteData2D(resultspath, maps2d["Pnumax"], "Pnumax"; ensure_path = false, metadata = fits_metadata)
+        WriteData2D(resultspath, maps2d["polfracmax"], "polfracmax"; ensure_path = false, metadata = fits_metadata)
         faraday_enabled && WriteData2D(resultspath, maps2d["Pmax"], "Pmax"; ensure_path = false, metadata = fits_metadata)
 
         alpha_metadata = copy(fits_metadata)

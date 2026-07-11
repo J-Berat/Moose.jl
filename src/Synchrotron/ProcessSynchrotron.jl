@@ -50,6 +50,26 @@ function _write_integrated_quantities(resultspath, B1, B2, BLOS, T, ne, Bperpcub
     return nothing
 end
 
+function _max_finite_cube(cube::AbstractArray{<:Real, 3})
+    out = Matrix{eltype(cube)}(undef, size(cube, 1), size(cube, 2))
+    nan = convert(eltype(out), NaN)
+
+    @inbounds for j in axes(cube, 2), i in axes(cube, 1)
+        best = -Inf
+        found = false
+        for k in axes(cube, 3)
+            value = cube[i, j, k]
+            if isfinite(value)
+                best = max(best, Float64(value))
+                found = true
+            end
+        end
+        out[i, j] = found ? convert(eltype(out), best) : nan
+    end
+
+    return out
+end
+
 function _healpix_unit(DataName::String)
     return haskey(DictHeader, DataName) ? String(DictHeader[DataName]["bunit"]) : ""
 end
@@ -222,6 +242,54 @@ end
 _to_precision(::Type{T}, x::Nothing) where {T} = nothing
 _to_precision(::Type{T}, x::AbstractArray) where {T} = eltype(x) === T ? x : T.(x)
 
+function _physical_mask_threshold(mask_config, key::AbstractString)
+    mask_config === nothing && return nothing
+    mask_config isa AbstractDict || return nothing
+    return get(mask_config, key, nothing)
+end
+
+function _has_physical_mask(mask_config)
+    mask_config isa AbstractDict || return false
+    return any(_physical_mask_threshold(mask_config, key) !== nothing for key in ("T_min", "T_max", "n_min", "n_max"))
+end
+
+function _physical_cell_mask(T, n, mask_config)
+    mask = trues(size(T))
+    Tmin = _physical_mask_threshold(mask_config, "T_min")
+    Tmax = _physical_mask_threshold(mask_config, "T_max")
+    nmin = _physical_mask_threshold(mask_config, "n_min")
+    nmax = _physical_mask_threshold(mask_config, "n_max")
+
+    Tmin === nothing || (mask .&= T .>= Tmin)
+    Tmax === nothing || (mask .&= T .<= Tmax)
+    nmin === nothing || (mask .&= n .>= nmin)
+    nmax === nothing || (mask .&= n .<= nmax)
+
+    return mask
+end
+
+function _apply_physical_mask!(B1, B2, BLOS, T, n, nHp, mask_config)
+    _has_physical_mask(mask_config) || return nothing
+
+    mask = _physical_cell_mask(T, n, mask_config)
+    rejected = .!mask
+    B1[rejected] .= zero(eltype(B1))
+    B2[rejected] .= zero(eltype(B2))
+    BLOS[rejected] .= zero(eltype(BLOS))
+    T[rejected] .= zero(eltype(T))
+    n[rejected] .= zero(eltype(n))
+    nHp === nothing || (nHp[rejected] .= zero(eltype(nHp)))
+    return mask
+end
+
+function _density_to_number_density!(n, density_kind::AbstractString, mean_molecular_weight::Real, hydrogen_mass_g::Real)
+    kind = lowercase(String(density_kind))
+    kind == "number_density" && return n
+    kind == "mass_density" || error("Unknown density_kind $(density_kind). Use \"number_density\" or \"mass_density\".")
+    n ./= (Float64(mean_molecular_weight) * Float64(hydrogen_mass_g))
+    return n
+end
+
 function _process_synchrotron_common(
     simu::AbstractString,
     LOS,
@@ -249,15 +317,25 @@ function _process_synchrotron_common(
     rm_clean_threshold::Real = 0.0,
     float_type::Type{<:AbstractFloat} = Float64,
     tile_rows::Union{Nothing, Integer} = nothing,
+    field_sources=nothing,
+    physical_mask=nothing,
+    density_kind::AbstractString="number_density",
+    mean_molecular_weight::Real=1.0,
+    hydrogen_mass_g::Real=M_p,
+    outputs=Set(["integrated", "stokes", "rm", "fdf", "spectral_index", "diagnostics"]),
 )
+    selected_outputs = Set(String.(outputs))
+    want(name) = name in selected_outputs
+    need_qu = want("stokes") || want("fdf") || want("diagnostics")
+    need_t = want("stokes") || want("spectral_index") || want("diagnostics")
     resultspath = joinpath(simu, LOS, "Synchrotron")
     mkpath(resultspath)
     fits_metadata = metadata === nothing ? Dict{String, Any}() : copy(metadata)
     fits_metadata["LOS"] = String(LOS)
     fits_metadata["BLENPC"] = Float64(BoxLength_pc)
-    grid_kind = simulation_grid_kind(simu)
+    grid_kind = simulation_grid_kind(simu, field_sources)
     grid_kind == :healpix && _validate_healpix_los(LOS)
-    hp_meta = grid_kind == :healpix ? healpix_simulation_metadata(simu) : nothing
+    hp_meta = grid_kind == :healpix ? healpix_simulation_metadata(simu, field_sources) : nothing
     fits_metadata["GRID"] = grid_kind == :healpix ? "HEALPIX" : "IMAGE"
 
     if float_type !== Float64
@@ -277,6 +355,11 @@ function _process_synchrotron_common(
                 tile_rows = Int(tile_rows),
                 resultspath = resultspath,
                 hp_meta = hp_meta,
+                field_sources = field_sources,
+                physical_mask = physical_mask,
+                density_kind = density_kind,
+                mean_molecular_weight = mean_molecular_weight,
+                hydrogen_mass_g = hydrogen_mass_g,
             )
         end
         return _process_synchrotron_tiled(
@@ -289,10 +372,15 @@ function _process_synchrotron_common(
             float_type = float_type,
             tile_rows = Int(tile_rows),
             resultspath = resultspath,
+            field_sources = field_sources,
+            physical_mask = physical_mask,
+            density_kind = density_kind,
+            mean_molecular_weight = mean_molecular_weight,
+            hydrogen_mass_g = hydrogen_mass_g,
         )
     end
 
-    SimuParameters = ReadSimulation(simu, LOS, conversionn, conversionT, conversionB)
+    SimuParameters = ReadSimulation(simu, LOS, conversionn, conversionT, conversionB; field_sources = field_sources)
     B1, B2, BLOS = SimuParameters[1], SimuParameters[2], SimuParameters[3]
     T, n = SimuParameters[4], SimuParameters[5]
     nHp = SimuParameters[7]
@@ -303,6 +391,7 @@ function _process_synchrotron_common(
     T = _to_precision(float_type, T)
     n = _to_precision(float_type, n)
     nHp = _to_precision(float_type, nHp)
+    _density_to_number_density!(n, density_kind, mean_molecular_weight, hydrogen_mass_g)
     _validate_processing_cube_shapes(simu, LOS, expected_shape,
         "B1" => B1,
         "B2" => B2,
@@ -311,6 +400,7 @@ function _process_synchrotron_common(
         "density" => n,
         "densityHp" => nHp,
     )
+    _apply_physical_mask!(B1, B2, BLOS, T, n, nHp, physical_mask)
 
     los_pixel_length_pc, los_pixel_length_cm, los_distance_array = compute_los_spacing(BoxLength_pc, size(B1, 3))
 
@@ -323,7 +413,7 @@ function _process_synchrotron_common(
 
     _stage("Computing electron density")
     ne = _to_precision(float_type, electron_density_builder(T, n, nHp))
-    if write_ne
+    if write_ne && want("integrated")
         if hp_meta === nothing
             WriteData3D(resultspath, ne, "ne", los_distance_array; ensure_path=false, metadata=fits_metadata)
         else
@@ -332,10 +422,12 @@ function _process_synchrotron_common(
     end
 
     _stage("Computing integrated quantities")
-    if hp_meta === nothing
-        _write_integrated_quantities(resultspath, B1, B2, BLOS, T, ne, Bperpcube, los_pixel_length_cm; metadata=fits_metadata)
-    else
-        _write_integrated_quantities_healpix(resultspath, B1, B2, BLOS, T, ne, Bperpcube, los_pixel_length_cm, hp_meta)
+    if want("integrated")
+        if hp_meta === nothing
+            _write_integrated_quantities(resultspath, B1, B2, BLOS, T, ne, Bperpcube, los_pixel_length_cm; metadata=fits_metadata)
+        else
+            _write_integrated_quantities_healpix(resultspath, B1, B2, BLOS, T, ne, Bperpcube, los_pixel_length_cm, hp_meta)
+        end
     end
     B1 = nothing
     B2 = nothing
@@ -343,17 +435,19 @@ function _process_synchrotron_common(
     n = nothing
 
     RMcube = nothing
-    if faraday_enabled
+    if faraday_enabled && (want("rm") || need_qu)
         resultspath = joinpath(resultspath, "WithFaraday")
         mkpath(resultspath)
         _stage("Computing RM")
         dRM = deltaRM(BLOS, ne, los_pixel_length_pc)
         RMcube = RM(_to_precision(float_type, dRM))
         RMmap = RMcube[:, :, end]
-        if hp_meta === nothing
-            WriteData2D(resultspath, RMmap, "RMmap"; ensure_path=false, metadata=fits_metadata)
-        else
-            _write_healpix_map_quantity(resultspath, RMmap, "RMmap", hp_meta)
+        if want("rm")
+            if hp_meta === nothing
+                WriteData2D(resultspath, RMmap, "RMmap"; ensure_path=false, metadata=fits_metadata)
+            else
+                _write_healpix_map_quantity(resultspath, RMmap, "RMmap", hp_meta)
+            end
         end
     else
         resultspath = joinpath(resultspath, "noFaraday")
@@ -361,22 +455,27 @@ function _process_synchrotron_common(
         @info "No Faraday rotation included"
     end
 
-    if faraday_enabled
+    if need_qu && faraday_enabled
         _stage("Computing Qnu and Unu with Faraday rotation")
         Qnu, Unu = QUnu3D(Bperpcube, psi_src, RMcube, nuArray, df, los_pixel_length_cm; log_progress = log_progress)
-    else
+    elseif need_qu
         _stage("Computing Qnu and Unu without Faraday rotation")
         Qnu, Unu = QUnuNoFaraday3D(Bperpcube, psi_src, nuArray, df, los_pixel_length_cm; log_progress = log_progress)
     end
 
-    T_nu = Tnu3D(Bperpcube, nuArray, df, los_pixel_length_cm)
+    if !need_qu
+        Qnu = nothing
+        Unu = nothing
+    end
+    T_nu = need_t ? Tnu3D(Bperpcube, nuArray, df, los_pixel_length_cm) : nothing
     Bperpcube = nothing
 
-    if filtering_enabled
+    if filtering_enabled && (need_qu || need_t)
         hp_meta === nothing ||
             throw_config_error("HEALPix inputs do not support the current cartesian Fourier filtering (`responseSynchrotron=Y`). Disable filtering or add a spherical-harmonic HEALPix filter.";
                 code=:unsupported_grid_operation)
         _stage("Applying interferometric Fourier mask")
+        need_qu && need_t || throw_config_error("Filtering selective outputs requires both Q/U and T; include `stokes` or `diagnostics`."; code=:invalid_outputs)
         _apply_synchrotron_filter!(Qnu, Unu, T_nu, kernel_size_synchrotron)
         resultspath = joinpath(resultspath, "filtered")
         mkpath(resultspath)
@@ -384,7 +483,7 @@ function _process_synchrotron_common(
         @info "No filtering performed"
     end
 
-    if noise_enabled
+    if noise_enabled && need_qu
         _stage("Adding gaussian noise to Q and U")
         _add_noise!(Qnu, Unu, SNR_nu, rng)
     end
@@ -393,27 +492,41 @@ function _process_synchrotron_common(
     # so the spectral axis is converted to Hz once, here, at write time.
     nuArray_Hz = collect(Float64, nuArray) .* 1e6
 
-    if hp_meta === nothing
-        WriteQUnu3D(resultspath, Qnu, Unu, nuArray_Hz; ensure_path=false, metadata=fits_metadata)
-        WriteData3D(resultspath, T_nu, "T_nu", nuArray_Hz; ensure_path=false, metadata=fits_metadata, filename="Tnu.fits")
-    else
-        _write_healpix_stack_quantity(resultspath, Qnu, "Qnu", nuArray_Hz, hp_meta)
-        _write_healpix_stack_quantity(resultspath, Unu, "Unu", nuArray_Hz, hp_meta)
-        _write_healpix_stack_quantity(resultspath, T_nu, "T_nu", nuArray_Hz, hp_meta; basename="Tnu")
+    if want("stokes")
+        if hp_meta === nothing
+            WriteQUnu3D(resultspath, Qnu, Unu, nuArray_Hz; ensure_path=false, metadata=fits_metadata)
+            WriteData3D(resultspath, T_nu, "T_nu", nuArray_Hz; ensure_path=false, metadata=fits_metadata, filename="Tnu.fits")
+        else
+            _write_healpix_stack_quantity(resultspath, Qnu, "Qnu", nuArray_Hz, hp_meta)
+            _write_healpix_stack_quantity(resultspath, Unu, "Unu", nuArray_Hz, hp_meta)
+            _write_healpix_stack_quantity(resultspath, T_nu, "T_nu", nuArray_Hz, hp_meta; basename="Tnu")
+        end
     end
 
-    _stage("Computing Pnu and Pnumax")
-    Pnucube = Pnu(Qnu, Unu)
-    Pnumax = maxCube(Pnucube)
-    if hp_meta === nothing
-        WriteData3D(resultspath, Pnucube, "Pnu", nuArray_Hz; ensure_path=false, metadata=fits_metadata)
-        WriteData2D(resultspath, Pnumax, "Pnumax"; ensure_path=false, metadata=fits_metadata)
-    else
-        _write_healpix_stack_quantity(resultspath, Pnucube, "Pnu", nuArray_Hz, hp_meta)
-        _write_healpix_map_quantity(resultspath, Pnumax, "Pnumax", hp_meta)
+    Pnumax = nothing
+    if want("stokes") || want("diagnostics")
+        _stage("Computing polarized intensity")
+        Pnucube = Pnu(Qnu, Unu)
+        Pnumax = maxCube(Pnucube)
+        if want("stokes")
+            polfrac = PolarizationFraction(Pnucube, T_nu)
+            polfracmax = _max_finite_cube(polfrac)
+            if hp_meta === nothing
+                WriteData3D(resultspath, Pnucube, "Pnu", nuArray_Hz; ensure_path=false, metadata=fits_metadata)
+                WriteData2D(resultspath, Pnumax, "Pnumax"; ensure_path=false, metadata=fits_metadata)
+                WriteData3D(resultspath, polfrac, "polfrac", nuArray_Hz; ensure_path=false, metadata=fits_metadata)
+                WriteData2D(resultspath, polfracmax, "polfracmax"; ensure_path=false, metadata=fits_metadata)
+            else
+                _write_healpix_stack_quantity(resultspath, Pnucube, "Pnu", nuArray_Hz, hp_meta)
+                _write_healpix_map_quantity(resultspath, Pnumax, "Pnumax", hp_meta)
+                _write_healpix_stack_quantity(resultspath, polfrac, "polfrac", nuArray_Hz, hp_meta)
+                _write_healpix_map_quantity(resultspath, polfracmax, "polfracmax", hp_meta)
+            end
+        end
     end
-    _stage("Computing spectral index map")
-    try
+    if want("spectral_index")
+      _stage("Computing spectral index map")
+      try
         if length(nuArray) >= 2
             # T_nu is a brightness temperature, so the fitted log-log slope is
             # the temperature index beta (T ∝ ν^β). The map is written in the
@@ -436,15 +549,18 @@ function _process_synchrotron_common(
         end
     catch err
         @warn "Failed to compute or write the spectral index map" path = resultspath exception = (err, catch_backtrace())
+      end
     end
 
-    try
+    if want("diagnostics")
+      try
         write_polarization_diagnostic_plots(resultspath, Qnu, Unu, T_nu, nuArray_Hz; Pnumax = Pnumax)
     catch err
         @warn "Failed to write polarization diagnostic plots" path = resultspath exception = (err, catch_backtrace())
+      end
     end
 
-    if faraday_enabled
+    if faraday_enabled && want("fdf")
         _stage("Performing RM synthesis")
         rmsf = nothing
         if hp_meta === nothing
@@ -514,7 +630,9 @@ function ProcessSynchrotron(simu::AbstractString, LOS, FaradayRotation::Abstract
                        PixelLength_pc, PixelLength_cm, BoxLength_pc,
                        DistanceArray, conversionn, conversionT, conversionB; log_progress::Bool = false, rng = Random.default_rng(), expected_shape = nothing, metadata = nothing,
                        rm_clean_enabled::Bool = false, rm_clean_gain::Real = 0.1, rm_clean_niter::Integer = 1000, rm_clean_threshold::Real = 0.0,
-                       float_type::Type{<:AbstractFloat} = Float64, tile_rows::Union{Nothing, Integer} = nothing)
+                       float_type::Type{<:AbstractFloat} = Float64, tile_rows::Union{Nothing, Integer} = nothing, field_sources=nothing,
+                       physical_mask=nothing, density_kind::AbstractString="number_density", mean_molecular_weight::Real=1.0,
+                       hydrogen_mass_g::Real=M_p, outputs=Set(["integrated", "stokes", "rm", "fdf", "spectral_index", "diagnostics"]))
     return _process_synchrotron_common(
         simu,
         LOS,
@@ -542,6 +660,12 @@ function ProcessSynchrotron(simu::AbstractString, LOS, FaradayRotation::Abstract
         rm_clean_threshold = rm_clean_threshold,
         float_type = float_type,
         tile_rows = tile_rows,
+        field_sources = field_sources,
+        physical_mask = physical_mask,
+        density_kind = density_kind,
+        mean_molecular_weight = mean_molecular_weight,
+        hydrogen_mass_g = hydrogen_mass_g,
+        outputs = outputs,
     )
 end
 
@@ -550,7 +674,9 @@ function ProcessSynchrotron(simu::String, LOS, FaradayRotation::String, response
                        nuArray::AbstractArray, PhiArray, PixelLength_pc, PixelLength_cm,
                        BoxLength_pc, DistanceArray, conversionn, conversionT, conversionB; log_progress::Bool = false, rng = Random.default_rng(), expected_shape = nothing, metadata = nothing,
                        rm_clean_enabled::Bool = false, rm_clean_gain::Real = 0.1, rm_clean_niter::Integer = 1000, rm_clean_threshold::Real = 0.0,
-                       float_type::Type{<:AbstractFloat} = Float64, tile_rows::Union{Nothing, Integer} = nothing)
+                       float_type::Type{<:AbstractFloat} = Float64, tile_rows::Union{Nothing, Integer} = nothing, field_sources=nothing,
+                       physical_mask=nothing, density_kind::AbstractString="number_density", mean_molecular_weight::Real=1.0,
+                       hydrogen_mass_g::Real=M_p, outputs=Set(["integrated", "stokes", "rm", "fdf", "spectral_index", "diagnostics"]))
     return _process_synchrotron_common(
         simu,
         LOS,
@@ -578,6 +704,12 @@ function ProcessSynchrotron(simu::String, LOS, FaradayRotation::String, response
         rm_clean_threshold = rm_clean_threshold,
         float_type = float_type,
         tile_rows = tile_rows,
+        field_sources = field_sources,
+        physical_mask = physical_mask,
+        density_kind = density_kind,
+        mean_molecular_weight = mean_molecular_weight,
+        hydrogen_mass_g = hydrogen_mass_g,
+        outputs = outputs,
     )
 end
 
@@ -586,7 +718,9 @@ function ProcessSynchrotron(simu::String, LOS, FaradayRotation::String, response
                        PixelLength_pc, PixelLength_cm, BoxLength_pc,
                        DistanceArray, conversionn, conversionT, conversionB; log_progress::Bool = false, rng = Random.default_rng(), expected_shape = nothing, metadata = nothing,
                        rm_clean_enabled::Bool = false, rm_clean_gain::Real = 0.1, rm_clean_niter::Integer = 1000, rm_clean_threshold::Real = 0.0,
-                       float_type::Type{<:AbstractFloat} = Float64, tile_rows::Union{Nothing, Integer} = nothing)
+                       float_type::Type{<:AbstractFloat} = Float64, tile_rows::Union{Nothing, Integer} = nothing, field_sources=nothing,
+                       physical_mask=nothing, density_kind::AbstractString="number_density", mean_molecular_weight::Real=1.0,
+                       hydrogen_mass_g::Real=M_p, outputs=Set(["integrated", "stokes", "rm", "fdf", "spectral_index", "diagnostics"]))
     return _process_synchrotron_common(
         simu,
         LOS,
@@ -614,5 +748,11 @@ function ProcessSynchrotron(simu::String, LOS, FaradayRotation::String, response
         rm_clean_threshold = rm_clean_threshold,
         float_type = float_type,
         tile_rows = tile_rows,
+        field_sources = field_sources,
+        physical_mask = physical_mask,
+        density_kind = density_kind,
+        mean_molecular_weight = mean_molecular_weight,
+        hydrogen_mass_g = hydrogen_mass_g,
+        outputs = outputs,
     )
 end

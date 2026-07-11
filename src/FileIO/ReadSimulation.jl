@@ -58,6 +58,49 @@ function validate_required_fits(file)
 end
 
 const REQUIRED_SIMULATION_FIELDS = ("Bx", "By", "Bz", "density", "temperature")
+const OPTIONAL_SIMULATION_FIELDS = ("Vx", "Vy", "Vz", "densityH2", "densityHp")
+
+function _field_source_map_get(field_sources, field::AbstractString)
+    field_sources === nothing && return nothing
+    field_sources isa AbstractDict || return nothing
+
+    for key in (field, Symbol(field))
+        try
+            haskey(field_sources, key) && return field_sources[key]
+        catch
+        end
+    end
+
+    return nothing
+end
+
+function _source_spec_path(simu::AbstractString, path::AbstractString)
+    expanded = expanduser(String(path))
+    return isabspath(expanded) ? expanded : joinpath(simu, expanded)
+end
+
+function _field_source_from_spec(simu::AbstractString, spec)
+    if spec isa AbstractString
+        path = _source_spec_path(simu, spec)
+        return isdir(path) ? _fits_file_candidates(path) : path
+    elseif spec isa AbstractVector
+        return [_source_spec_path(simu, item) for item in spec]
+    elseif spec isa AbstractDict
+        files = get(spec, "files", get(spec, :files, nothing))
+        if files !== nothing
+            files isa AbstractVector || error("`files` in a field source mapping must be an array of paths.")
+            return [_source_spec_path(simu, item) for item in files]
+        end
+
+        path = get(spec, "path", get(spec, :path, get(spec, "file", get(spec, :file, nothing))))
+        path === nothing && error("Field source mappings must define `path`, `file`, or `files`.")
+        resolved_path = _source_spec_path(simu, path)
+        dataset = get(spec, "dataset", get(spec, :dataset, nothing))
+        return dataset === nothing ? resolved_path : HDF5DatasetSource(resolved_path, String(dataset))
+    end
+
+    error("Unsupported field source mapping value $(typeof(spec)). Use a path string, a path array, or a dict.")
+end
 
 function _fits_file_candidates(dir::AbstractString)
     isdir(dir) || return String[]
@@ -90,7 +133,10 @@ function _shared_hdf5_field_source(simu::AbstractString, field::AbstractString)
     return nothing
 end
 
-function simulation_field_source(simu::AbstractString, field::AbstractString)
+function simulation_field_source(simu::AbstractString, field::AbstractString, field_sources=nothing)
+    configured = _field_source_map_get(field_sources, field)
+    configured === nothing || return _field_source_from_spec(simu, configured)
+
     exact_files = _field_file_candidates(simu, field)
     !isempty(exact_files) && return first(exact_files)
 
@@ -161,11 +207,11 @@ function _source_grid_kind(source)
     return first(kinds)
 end
 
-function simulation_grid_kind(simu::AbstractString)
+function simulation_grid_kind(simu::AbstractString, field_sources=nothing)
     validation_error = ensure_directory_access(simu)
     validation_error === nothing || error(validation_error)
 
-    sources = [simulation_field_source(simu, field) for field in REQUIRED_SIMULATION_FIELDS]
+    sources = [simulation_field_source(simu, field, field_sources) for field in REQUIRED_SIMULATION_FIELDS]
     foreach(_validate_simulation_source, sources)
     kinds = _source_grid_kind.(sources)
     length(unique(kinds)) == 1 ||
@@ -209,10 +255,10 @@ function _healpix_target_from_source(source)
     return (; nside = info.nside, order = info.order, coordsys = info.coordsys)
 end
 
-function healpix_simulation_metadata(simu::AbstractString)
-    simulation_grid_kind(simu) == :healpix ||
+function healpix_simulation_metadata(simu::AbstractString, field_sources=nothing)
+    simulation_grid_kind(simu, field_sources) == :healpix ||
         error("Simulation $(simu) is not backed by HEALPix FITS inputs.")
-    return _healpix_target_from_source(simulation_field_source(simu, "Bx"))
+    return _healpix_target_from_source(simulation_field_source(simu, "Bx", field_sources))
 end
 
 function read_required_cube(file, conversion)
@@ -322,21 +368,21 @@ function read_optional_grid(source, conversion, LOS, grid_kind; hp_target=nothin
     return permute_dims(read_required_grid(source, conversion), LOS)
 end
 
-function ReadSimulation(simu, LOS, conversionn, conversionT, conversionV, conversionB)
+function ReadSimulation(simu, LOS, conversionn, conversionT, conversionV, conversionB; field_sources=nothing)
     validation_error = ensure_directory_access(simu)
     validation_error === nothing || error(validation_error)
 
-    fileBx = simulation_field_source(simu, "Bx")
-    fileBy = simulation_field_source(simu, "By")
-    fileBz = simulation_field_source(simu, "Bz")
-    filen = simulation_field_source(simu, "density")
-    fileT = simulation_field_source(simu, "temperature")
-    fileVx = simulation_field_source(simu, "Vx")
-    fileVy = simulation_field_source(simu, "Vy")
-    fileVz = simulation_field_source(simu, "Vz")
-    filenH2 = simulation_field_source(simu, "densityH2")
-    filenHp = simulation_field_source(simu, "densityHp")
-    grid_kind = simulation_grid_kind(simu)
+    fileBx = simulation_field_source(simu, "Bx", field_sources)
+    fileBy = simulation_field_source(simu, "By", field_sources)
+    fileBz = simulation_field_source(simu, "Bz", field_sources)
+    filen = simulation_field_source(simu, "density", field_sources)
+    fileT = simulation_field_source(simu, "temperature", field_sources)
+    fileVx = simulation_field_source(simu, "Vx", field_sources)
+    fileVy = simulation_field_source(simu, "Vy", field_sources)
+    fileVz = simulation_field_source(simu, "Vz", field_sources)
+    filenH2 = simulation_field_source(simu, "densityH2", field_sources)
+    filenHp = simulation_field_source(simu, "densityHp", field_sources)
+    grid_kind = simulation_grid_kind(simu, field_sources)
     grid_kind == :healpix && _validate_healpix_los(LOS)
     hp_target = grid_kind == :healpix ? _healpix_target_from_source(fileBx) : nothing
 
@@ -365,18 +411,18 @@ function ReadSimulation(simu, LOS, conversionn, conversionT, conversionV, conver
     return (B1, B2, BLOS, V1, V2, VLOS, T, n, nH2, nHp)
 end
 
-function ReadSimulation(simu, LOS, conversionn, conversionT, conversionB)
+function ReadSimulation(simu, LOS, conversionn, conversionT, conversionB; field_sources=nothing)
     validation_error = ensure_directory_access(simu)
     validation_error === nothing || error(validation_error)
 
-    fileBx = simulation_field_source(simu, "Bx")
-    fileBy = simulation_field_source(simu, "By")
-    fileBz = simulation_field_source(simu, "Bz")
-    filen = simulation_field_source(simu, "density")
-    fileT = simulation_field_source(simu, "temperature")
-    filenH2 = simulation_field_source(simu, "densityH2")
-    filenHp = simulation_field_source(simu, "densityHp")
-    grid_kind = simulation_grid_kind(simu)
+    fileBx = simulation_field_source(simu, "Bx", field_sources)
+    fileBy = simulation_field_source(simu, "By", field_sources)
+    fileBz = simulation_field_source(simu, "Bz", field_sources)
+    filen = simulation_field_source(simu, "density", field_sources)
+    fileT = simulation_field_source(simu, "temperature", field_sources)
+    filenH2 = simulation_field_source(simu, "densityH2", field_sources)
+    filenHp = simulation_field_source(simu, "densityHp", field_sources)
+    grid_kind = simulation_grid_kind(simu, field_sources)
     grid_kind == :healpix && _validate_healpix_los(LOS)
     hp_target = grid_kind == :healpix ? _healpix_target_from_source(fileBx) : nothing
 

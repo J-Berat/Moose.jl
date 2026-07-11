@@ -42,6 +42,7 @@ COPY src ./src
 COPY test ./test
 
 RUN julia --startup-file=no --project=/app -e 'using Pkg; Pkg.precompile(); using Moose'
+RUN python3 -m unittest discover -s test -p 'test_*.py'
 
 RUN mkdir -p /data
 

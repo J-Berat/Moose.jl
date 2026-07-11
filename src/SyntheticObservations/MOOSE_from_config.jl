@@ -7,8 +7,10 @@ using Dates
 using JSON
 
 using ..Moose: PARSEC_TO_CM, RunConfig, ValidationResult, ensure_directory_access,
+               build_density_parameters,
                ensure_readable_file, normalize_los_float_values, normalize_los_int_values,
-               normalize_rng_seed, run_moose_processing, throw_config_error,
+               normalize_rng_seed, normalize_field_sources, normalize_physical_mask,
+               run_moose_processing, throw_config_error,
                validate_los_float_values, validate_los_int_values,
                validation_failure, validation_success
 
@@ -283,6 +285,9 @@ function build_config(cfg, config_path)
     conversionn = validate_positive_finite(get(cfg, "conversionn", 1.0), "conversionn")
     conversionT = validate_positive_finite(get(cfg, "conversionT", 1.0), "conversionT")
     log_progress = get(cfg, "log_progress", true)
+    field_sources = normalize_field_sources(get(cfg, "field_sources", get(cfg, "input_fields", nothing)))
+    physical_mask = normalize_physical_mask(get(cfg, "physical_mask", get(cfg, "mask", nothing)))
+    density_kind, mean_molecular_weight, hydrogen_mass_g = build_density_parameters(cfg)
     responseSynchrotron = normalize_yes_no_flag(get(cfg, "responseSynchrotron", "N"), "responseSynchrotron")
     kernel_size_synchrotron = get(cfg, "kernel_size_synchrotron", nothing)
     add_noise = normalize_yes_no_flag(get(cfg, "add_noise", "N"), "add_noise")
@@ -363,6 +368,28 @@ function build_config(cfg, config_path)
             code=:invalid_tile_size)
     end
 
+    resume = lowercase(strip(String(get(cfg, "resume", "off"))))
+    resume in ("off", "safe") || throw_config_error(
+        "`resume` must be \"off\" or \"safe\". Got: $(resume)"; code=:invalid_resume)
+    resume == "safe" && add_noise == "Y" && throw_config_error(
+        "`resume = safe` is not compatible with noise injection because skipped LOS runs would change the shared random-number sequence."; code=:invalid_resume)
+
+    raw_outputs = get(cfg, "outputs", ["all"])
+    raw_outputs isa AbstractVector || throw_config_error("`outputs` must be an array of output groups."; code=:invalid_outputs)
+    outputs = unique(lowercase.(String.(raw_outputs)))
+    allowed_outputs = Set(["all", "integrated", "stokes", "rm", "fdf", "spectral_index", "diagnostics"])
+    invalid_outputs = [name for name in outputs if !(name in allowed_outputs)]
+    isempty(invalid_outputs) || throw_config_error("Unknown output groups: $(join(invalid_outputs, ", "))."; code=:invalid_outputs)
+    isempty(outputs) && throw_config_error("`outputs` must select at least one output group."; code=:invalid_outputs)
+    all_outputs = "all" in outputs
+    selected_outputs = all_outputs ? Set(["integrated", "stokes", "rm", "fdf", "spectral_index", "diagnostics"]) : Set(outputs)
+    !all_outputs && !isempty(intersect(selected_outputs, Set(["rm", "fdf"]))) && FaradayRotation != "Y" && throw_config_error(
+        "The `rm` and `fdf` output groups require Faraday rotation."; code=:invalid_outputs)
+    rm_clean_enabled && !("fdf" in selected_outputs) && throw_config_error(
+        "RM-CLEAN requires the `fdf` output group."; code=:invalid_outputs)
+    tile_size !== nothing && length(selected_outputs) < 6 && throw_config_error(
+        "Selective outputs are not supported with `tile_size` yet; use `outputs: [\"all\"]` or remove `tile_size`."; code=:invalid_outputs)
+
     return RunConfig(
         base_dir,
         simu_paths,
@@ -396,6 +423,13 @@ function build_config(cfg, config_path)
         rm_clean_threshold = rm_clean_threshold,
         precision = precision,
         tile_size = tile_size,
+        field_sources = field_sources,
+        physical_mask = physical_mask,
+        density_kind = density_kind,
+        mean_molecular_weight = mean_molecular_weight,
+        hydrogen_mass_g = hydrogen_mass_g,
+        resume = resume,
+        outputs = outputs,
     ), simu_paths
 end
 

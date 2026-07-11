@@ -38,6 +38,7 @@ class FrontendOptions:
     print_command: bool
     dry_run: bool
     write_back: bool
+    plan: bool
     base_dir: str | None
     simu: tuple[str, ...]
     los: tuple[str, ...]
@@ -45,6 +46,9 @@ class FrontendOptions:
     conversionB: float | None
     conversionn: float | None
     conversionT: float | None
+    density_kind: str | None
+    mean_molecular_weight: float | None
+    hydrogen_mass_g: float | None
     faraday: str | None
     phimin: float | None
     phimax: float | None
@@ -56,6 +60,8 @@ class FrontendOptions:
     rng_seed: int | None
     precision: str | None
     tile_size: int | None
+    resume: str | None
+    outputs: tuple[str, ...]
     ne_option: str | None
     zeta: float | None
     Geff: float | None
@@ -98,6 +104,15 @@ def build_julia_args(options: FrontendOptions) -> List[str]:
     if options.conversionT is not None:
         args.extend(["--conversionT", str(options.conversionT)])
 
+    if options.density_kind:
+        args.extend(["--density-kind", options.density_kind])
+
+    if options.mean_molecular_weight is not None:
+        args.extend(["--mean-molecular-weight", str(options.mean_molecular_weight)])
+
+    if options.hydrogen_mass_g is not None:
+        args.extend(["--hydrogen-mass-g", str(options.hydrogen_mass_g)])
+
     if options.faraday:
         args.extend(["--faraday", options.faraday])
 
@@ -131,6 +146,12 @@ def build_julia_args(options: FrontendOptions) -> List[str]:
     if options.tile_size is not None:
         args.extend(["--tile-size", str(options.tile_size)])
 
+    if options.resume:
+        args.extend(["--resume", options.resume])
+
+    if options.outputs:
+        args.extend(["--outputs", ",".join(options.outputs)])
+
     if options.ne_option:
         args.extend(["--ne-option", str(options.ne_option)])
 
@@ -151,6 +172,9 @@ def build_julia_args(options: FrontendOptions) -> List[str]:
 
     if options.write_back:
         args.append("--write-back")
+
+    if options.plan:
+        args.append("--plan")
 
     return args
 
@@ -237,6 +261,7 @@ def validate_args(parser: argparse.ArgumentParser, parsed: argparse.Namespace) -
         print_command=parsed.print_command,
         dry_run=parsed.dry_run,
         write_back=parsed.write_back,
+        plan=parsed.plan,
         base_dir=parsed.base_dir,
         simu=tuple(parsed.simu or ()),
         los=los,
@@ -244,6 +269,9 @@ def validate_args(parser: argparse.ArgumentParser, parsed: argparse.Namespace) -
         conversionB=parsed.conversionB,
         conversionn=parsed.conversionn,
         conversionT=parsed.conversionT,
+        density_kind=parsed.density_kind,
+        mean_molecular_weight=parsed.mean_molecular_weight,
+        hydrogen_mass_g=parsed.hydrogen_mass_g,
         faraday=_normalize_flag(parsed.faraday),
         phimin=parsed.phimin,
         phimax=parsed.phimax,
@@ -255,6 +283,8 @@ def validate_args(parser: argparse.ArgumentParser, parsed: argparse.Namespace) -
         rng_seed=parsed.rng_seed,
         precision=parsed.precision,
         tile_size=parsed.tile_size,
+        resume=parsed.resume,
+        outputs=tuple(parsed.outputs.split(",")) if parsed.outputs else (),
         ne_option=parsed.ne_option,
         zeta=parsed.zeta,
         Geff=parsed.Geff,
@@ -281,7 +311,7 @@ def _log_invocation(log_file: Path, command: Iterable[str], status: int, message
 
 
 def run_julia_frontend(options: FrontendOptions) -> None:
-    cmd = [options.julia_binary, "--project", str(JULIA_ENTRYPOINT)]
+    cmd = [options.julia_binary, f"--project={REPO_ROOT}", str(JULIA_ENTRYPOINT)]
     cmd.extend(build_julia_args(options))
     command_string = format_command(cmd)
 
@@ -357,6 +387,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Persist merged CLI overrides into the provided config file.",
     )
+    parser.add_argument(
+        "--plan",
+        action="store_true",
+        help="Validate input metadata and print channel, workload, RAM, and disk estimates without processing.",
+    )
 
     parser.add_argument("--base-dir", help="Base directory containing the simulations.")
     parser.add_argument(
@@ -379,6 +414,21 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--conversionB", type=float, help="Magnetic field conversion factor.")
     parser.add_argument("--conversionn", type=float, help="Density conversion factor.")
     parser.add_argument("--conversionT", type=float, help="Temperature conversion factor.")
+    parser.add_argument(
+        "--density-kind",
+        choices=["number_density", "mass_density"],
+        help="Interpret density as number density nH or mass density rho.",
+    )
+    parser.add_argument(
+        "--mean-molecular-weight",
+        type=float,
+        help="Mean molecular weight used when --density-kind mass_density.",
+    )
+    parser.add_argument(
+        "--hydrogen-mass-g",
+        type=float,
+        help="Hydrogen mass in grams used when --density-kind mass_density.",
+    )
     parser.add_argument(
         "--faraday",
         choices=["Y", "N", "y", "n"],
@@ -411,6 +461,15 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         help="Process the sky plane in bands of this many rows (for cubes larger than RAM). "
         "Incompatible with filtering, noise injection, and RM-CLEAN.",
+    )
+    parser.add_argument(
+        "--resume",
+        choices=["off", "safe"],
+        help="Safely skip simulation/LOS work whose completion manifest still matches its inputs and config.",
+    )
+    parser.add_argument(
+        "--outputs",
+        help="Comma-separated output groups: integrated,stokes,rm,fdf,spectral_index,diagnostics (or all).",
     )
     parser.add_argument(
         "--ne-option",

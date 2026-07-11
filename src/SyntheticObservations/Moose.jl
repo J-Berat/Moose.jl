@@ -164,7 +164,7 @@ function format_duration(elapsed)
     return string(padded_hours, ":", padded_minutes, ":", padded_seconds, ".", padded_ms)
 end
 
-function write_summary_log(base_dir, chosen_simu, chosen_LOS, elapsed; config_path="moose_config.json", config_source_path=nothing, config_saved_path=config_path, faraday="N", rm_clean=false, responseSynchrotron="N", add_noise="N", interpolation_file_path=nothing, conversionB=nothing, conversionn=nothing, conversionT=nothing, ne_option=nothing, rng_seed=nothing, config_hash=nothing)
+function write_summary_log(base_dir, chosen_simu, chosen_LOS, elapsed; config_path="moose_config.json", config_source_path=nothing, config_saved_path=config_path, faraday="N", rm_clean=false, responseSynchrotron="N", add_noise="N", interpolation_file_path=nothing, conversionB=nothing, conversionn=nothing, conversionT=nothing, ne_option=nothing, rng_seed=nothing, config_hash=nothing, density_kind=nothing, mean_molecular_weight=nothing, hydrogen_mass_g=nothing)
     log_path = joinpath(base_dir, "MOOSE_summary.log")
     open(log_path, "a") do io
         println(io)
@@ -183,8 +183,14 @@ function write_summary_log(base_dir, chosen_simu, chosen_LOS, elapsed; config_pa
         println(io, "Config saved: $(config_saved_path === nothing ? "<not written>" : config_saved_path)")
         config_hash !== nothing && println(io, "Config hash: $(config_hash)")
         conversionB !== nothing && println(io, "Conversion B (to μG): $(conversionB)")
-        conversionn !== nothing && println(io, "Conversion n (to cm^-3): $(conversionn)")
+        if conversionn !== nothing
+            density_unit = density_kind == "mass_density" ? "rho to g cm^-3" : "n to cm^-3"
+            println(io, "Conversion density ($(density_unit)): $(conversionn)")
+        end
         conversionT !== nothing && println(io, "Conversion T (to K): $(conversionT)")
+        density_kind !== nothing && println(io, "Density kind: $(density_kind)")
+        mean_molecular_weight !== nothing && println(io, "Mean molecular weight: $(mean_molecular_weight)")
+        hydrogen_mass_g !== nothing && println(io, "Hydrogen mass (g): $(hydrogen_mass_g)")
         println(io, "Faraday rotation: $(faraday)")
         println(io, "RM-CLEAN: $(rm_clean)")
         println(io, "Synchrotron filtering: $(responseSynchrotron)")
@@ -309,6 +315,96 @@ end
 normalize_rng_seed(value) =
     value === nothing ? nothing : Int(value)
 
+function normalize_field_sources(value)
+    value === nothing && return Dict{String, Any}()
+    value isa AbstractDict || throw_config_error("`field_sources` must be an object mapping canonical field names to paths or HDF5 datasets."; code=:invalid_field_sources)
+
+    allowed = Set((REQUIRED_SIMULATION_FIELDS..., OPTIONAL_SIMULATION_FIELDS...))
+    field_sources = Dict{String, Any}()
+    for (key, spec) in value
+        field = String(key)
+        field in allowed || throw_config_error(
+            "`field_sources` contains unsupported field `$(field)`. Allowed fields: $(join(sort!(collect(allowed)), ", ")).";
+            code=:invalid_field_sources,
+        )
+        field_sources[field] = spec
+    end
+
+    return field_sources
+end
+
+function _mask_config_get(mask_cfg::AbstractDict, names)
+    for name in names
+        for key in (String(name), Symbol(name))
+            try
+                haskey(mask_cfg, key) && return mask_cfg[key]
+            catch
+            end
+        end
+    end
+    return nothing
+end
+
+function _normalize_mask_threshold(mask_cfg::AbstractDict, out::Dict{String, Any}, canonical::String, names)
+    value = _mask_config_get(mask_cfg, names)
+    value === nothing && return nothing
+    parsed = Float64(value)
+    isfinite(parsed) || throw_config_error("`physical_mask.$(canonical)` must be finite. Got: $(value)"; code=:invalid_physical_mask)
+    out[canonical] = parsed
+    return nothing
+end
+
+function normalize_physical_mask(value)
+    value === nothing && return Dict{String, Any}()
+    value === false && return Dict{String, Any}()
+    value isa AbstractDict || throw_config_error("`physical_mask` must be an object with optional T_min/T_max/n_min/n_max thresholds."; code=:invalid_physical_mask)
+
+    enabled = _mask_config_get(value, ("enabled",))
+    enabled === false && return Dict{String, Any}()
+
+    mask = Dict{String, Any}()
+    _normalize_mask_threshold(value, mask, "T_min", ("T_min", "temperature_min", "Tmin"))
+    _normalize_mask_threshold(value, mask, "T_max", ("T_max", "temperature_max", "Tmax"))
+    _normalize_mask_threshold(value, mask, "n_min", ("n_min", "density_min", "nH_min", "nmin"))
+    _normalize_mask_threshold(value, mask, "n_max", ("n_max", "density_max", "nH_max", "nmax"))
+
+    if get(mask, "T_min", -Inf) > get(mask, "T_max", Inf)
+        throw_config_error("`physical_mask.T_min` must be <= `physical_mask.T_max`."; code=:invalid_physical_mask)
+    end
+    if get(mask, "n_min", -Inf) > get(mask, "n_max", Inf)
+        throw_config_error("`physical_mask.n_min` must be <= `physical_mask.n_max`."; code=:invalid_physical_mask)
+    end
+
+    return mask
+end
+
+function normalize_density_kind(value)
+    kind = lowercase(strip(String(value)))
+    kind in ("number_density", "mass_density") ||
+        throw_config_error("`density_kind` must be \"number_density\" or \"mass_density\". Got: $(value)"; code=:invalid_density_kind)
+    return kind
+end
+
+function normalize_positive_config_float(value, field_name::AbstractString)
+    parsed = Float64(value)
+    isfinite(parsed) || throw_config_error("`$(field_name)` must be finite. Got: $(value)"; code=:invalid_density_kind)
+    parsed > 0 || throw_config_error("`$(field_name)` must be > 0. Got: $(value)"; code=:invalid_density_kind)
+    return parsed
+end
+
+function build_density_parameters(cfg)
+    density_cfg = get(cfg, "density", nothing)
+    kind = density_cfg isa AbstractDict ? get(density_cfg, "kind", get(cfg, "density_kind", "number_density")) : get(cfg, "density_kind", "number_density")
+    mu = density_cfg isa AbstractDict ? get(density_cfg, "mean_molecular_weight", get(density_cfg, "mu", get(cfg, "mean_molecular_weight", get(cfg, "mu", 1.0)))) : get(cfg, "mean_molecular_weight", get(cfg, "mu", 1.0))
+    mH = density_cfg isa AbstractDict ? get(density_cfg, "hydrogen_mass_g", get(density_cfg, "mH_g", get(cfg, "hydrogen_mass_g", M_p))) : get(cfg, "hydrogen_mass_g", M_p)
+
+    return (
+        normalize_density_kind(kind),
+        normalize_positive_config_float(mu, "mean_molecular_weight"),
+        normalize_positive_config_float(mH, "hydrogen_mass_g"),
+    )
+end
+
 struct RunConfig
     base_dir::String
     simulations::Vector{String}
@@ -342,6 +438,13 @@ struct RunConfig
     rng_seed::Union{Nothing, Int}
     precision::String
     tile_size::Union{Nothing, Int}
+    field_sources::Dict{String, Any}
+    physical_mask::Dict{String, Any}
+    density_kind::String
+    mean_molecular_weight::Float64
+    hydrogen_mass_g::Float64
+    resume::String
+    outputs::Set{String}
 
     function RunConfig(
         base_dir,
@@ -377,6 +480,13 @@ struct RunConfig
         rm_clean_threshold=0.0,
         precision="float64",
         tile_size=nothing,
+        field_sources=nothing,
+        physical_mask=nothing,
+        density_kind="number_density",
+        mean_molecular_weight=1.0,
+        hydrogen_mass_g=M_p,
+        resume="off",
+        outputs=["all"],
     )
         precision_flag = lowercase(String(precision))
         precision_flag in ("float64", "float32") ||
@@ -384,6 +494,11 @@ struct RunConfig
         tile_size = tile_size === nothing ? nothing : Int(tile_size)
         tile_size === nothing || tile_size > 0 ||
             error("`tile_size` must be a positive integer. Got: $(tile_size)")
+        resume_mode = lowercase(strip(String(resume)))
+        resume_mode in ("off", "safe") ||
+            error("`resume` must be \"off\" or \"safe\". Got: $(resume)")
+        output_set = Set(lowercase.(String.(outputs)))
+        "all" in output_set && (output_set = Set(["integrated", "stokes", "rm", "fdf", "spectral_index", "diagnostics"]))
 
         faraday_flag = uppercase(faraday_rotation)
         response_flag = uppercase(responseSynchrotron)
@@ -434,6 +549,13 @@ struct RunConfig
             normalize_rng_seed(rng_seed),
             precision_flag,
             tile_size,
+            normalize_field_sources(field_sources),
+            normalize_physical_mask(physical_mask),
+            normalize_density_kind(density_kind),
+            normalize_positive_config_float(mean_molecular_weight, "mean_molecular_weight"),
+            normalize_positive_config_float(hydrogen_mass_g, "hydrogen_mass_g"),
+            resume_mode,
+            output_set,
         )
     end
 end
@@ -484,7 +606,195 @@ function config_dict_from_struct(cfg::RunConfig)
         "rng_seed" => cfg.rng_seed,
         "precision" => cfg.precision,
         "tile_size" => cfg.tile_size,
+        "field_sources" => cfg.field_sources,
+        "physical_mask" => cfg.physical_mask,
+        "density_kind" => cfg.density_kind,
+        "mean_molecular_weight" => cfg.mean_molecular_weight,
+        "hydrogen_mass_g" => cfg.hydrogen_mass_g,
+        "resume" => cfg.resume,
+        "outputs" => sort!(collect(cfg.outputs)),
     )
+end
+
+const COMPLETION_MANIFEST = ".moose-complete.json"
+
+function _fingerprint_file(path::AbstractString)
+    info = stat(path)
+    return Dict("path" => abspath(path), "size" => info.size, "mtime" => info.mtime)
+end
+
+function _resume_input_paths(cfg::RunConfig, simu::AbstractString)
+    paths = String[cfg.interpolation_file_path]
+    for field in ("Bx", "By", "Bz", "density", "temperature")
+        source = simulation_field_source(simu, field, cfg.field_sources)
+        source isa AbstractString ? push!(paths, source) : append!(paths, String.(source))
+    end
+    if cfg.ne_option == "3"
+        source = simulation_field_source(simu, "densityHp", cfg.field_sources)
+        source isa AbstractString ? push!(paths, source) : append!(paths, String.(source))
+    end
+    return sort!(unique!(abspath.(paths)))
+end
+
+_los_output_root(simu::AbstractString, los::AbstractString) = joinpath(simu, los, "Synchrotron")
+
+function _output_files(root::AbstractString)
+    isdir(root) || return String[]
+    files = String[]
+    for (dir, _, names) in walkdir(root), name in names
+        endswith(lowercase(name), ".fits") && push!(files, relpath(joinpath(dir, name), root))
+    end
+    return sort!(files)
+end
+
+function _write_completion_manifest(cfg::RunConfig, simu, los, config_hash)
+    root = _los_output_root(simu, los)
+    outputs = _output_files(root)
+    isempty(outputs) && error("Cannot mark LOS=$(los) complete: no FITS outputs were produced in $(root).")
+    manifest = Dict(
+        "status" => "complete", "config_hash" => config_hash,
+        "simulation" => abspath(simu), "los" => los,
+        "moose_version" => moose_version(),
+        "inputs" => [_fingerprint_file(path) for path in _resume_input_paths(cfg, simu)],
+        "outputs" => outputs, "completed_at" => string(now()),
+    )
+    atomic_write_text(joinpath(root, COMPLETION_MANIFEST), JSON.json(manifest))
+end
+
+function _can_resume_los(cfg::RunConfig, simu, los, config_hash)
+    cfg.resume == "safe" || return false
+    root = _los_output_root(simu, los)
+    path = joinpath(root, COMPLETION_MANIFEST)
+    isfile(path) || return false
+    manifest = try
+        JSON.parsefile(path)
+    catch err
+        @warn "Ignoring unreadable completion manifest" path exception=err
+        return false
+    end
+    get(manifest, "status", "") == "complete" || return false
+    get(manifest, "config_hash", "") == config_hash || return false
+    get(manifest, "simulation", "") == abspath(simu) || return false
+    get(manifest, "los", "") == los || return false
+    current_inputs = try
+        [_fingerprint_file(p) for p in _resume_input_paths(cfg, simu)]
+    catch
+        return false
+    end
+    get(manifest, "inputs", Any[]) == current_inputs || return false
+    outputs = get(manifest, "outputs", Any[])
+    !isempty(outputs) || return false
+    return all(rel -> begin
+        candidate = joinpath(root, String(rel))
+        isfile(candidate) && filesize(candidate) > 0
+    end, outputs)
+end
+
+function _fits_image_shape(path::AbstractString)
+    return FITS(path) do fits
+        for hdu in fits
+            hdu isa ImageHDU && ndims(hdu) > 0 && return Tuple(Int.(size(hdu)))
+        end
+        error("No image HDU found in $(path).")
+    end
+end
+
+function _source_shape(source, grid_kind::Symbol)
+    if source isa HDF5DatasetSource
+        return h5open(source.file, "r") do h5
+            Tuple(Int.(size(h5[source.dataset])))
+        end
+    elseif source isa AbstractString && is_hdf5_path(source)
+        dataset = _resolve_hdf5_dataset(source, nothing)
+        return h5open(source, "r") do h5
+            Tuple(Int.(size(h5[dataset])))
+        end
+    elseif grid_kind == :healpix
+        files = source isa AbstractString ? [source] : source
+        info = _healpix_table_hdu_info(first(files))
+        npix = Healpix.nside2npix(info.nside)
+        if length(files) > 1
+            return (npix, 1, length(files))
+        end
+        header = FITS(first(files)) do fits
+            read_header(fits[info.hdu_index])
+        end
+        form = String(_fits_header_value(header, "TFORM1", "1D"))
+        matched = match(r"^\s*(\d+)", form)
+        nshell = matched === nothing ? 1 : parse(Int, matched.captures[1])
+        return (npix, 1, nshell)
+    elseif source isa AbstractVector
+        plane = _fits_image_shape(first(source))
+        length(plane) == 2 || error("Stacked FITS source must contain 2D planes; got $(plane).")
+        all(_fits_image_shape(path) == plane for path in source) || error("FITS planes in a field stack have inconsistent dimensions.")
+        return (plane..., length(source))
+    end
+    return _fits_image_shape(source)
+end
+
+_human_bytes(bytes::Real) = bytes < 1024 ? "$(round(Int, bytes)) B" :
+    bytes < 1024^2 ? "$(round(bytes / 1024; digits=1)) KiB" :
+    bytes < 1024^3 ? "$(round(bytes / 1024^2; digits=1)) MiB" :
+    "$(round(bytes / 1024^3; digits=2)) GiB"
+
+"""Validate input metadata and estimate the resources required by a run."""
+function preflight_plan(cfg::RunConfig; io::IO=stdout)
+    nfreq = length(range(start=cfg.nustart, stop=cfg.nuend, step=cfg.dnu))
+    nphi = cfg.faraday_rotation == "Y" ? length(range(start=cfg.phimin, stop=cfg.phimax, step=cfg.dphi)) : 0
+    bytes_per = cfg.precision == "float32" ? 4 : 8
+    entries = NamedTuple[]
+    total_disk = 0.0
+    total_voxel_channels = 0
+    want(name) = name in cfg.outputs
+    need_qu = want("stokes") || want("fdf") || want("diagnostics")
+    need_t = want("stokes") || want("spectral_index") || want("diagnostics")
+
+    println(io, "MOOSE preflight plan")
+    println(io, "Frequency channels: $(nfreq)" * (nphi > 0 ? " | Faraday-depth channels: $(nphi)" : ""))
+    for simu in cfg.simulations
+        grid = simulation_grid_kind(simu, cfg.field_sources)
+        shapes = Dict{String, Tuple}()
+        for field in ("Bx", "By", "Bz", "density", "temperature")
+            source = simulation_field_source(simu, field, cfg.field_sources)
+            _validate_simulation_source(source)
+            shapes[field] = _source_shape(source, grid)
+        end
+        cfg.ne_option == "3" && begin
+            source = simulation_field_source(simu, "densityHp", cfg.field_sources)
+            _validate_simulation_source(source)
+            shapes["densityHp"] = _source_shape(source, grid)
+        end
+        reference = shapes["Bx"]
+        length(reference) == 3 || error("Simulation field Bx must be 3D; got $(reference).")
+        mismatches = ["$(field)=$(shape)" for (field, shape) in shapes if shape != reference]
+        isempty(mismatches) || throw_config_error("Preflight shape mismatch in $(simu): expected $(reference); $(join(mismatches, ", "))."; code=:cube_shape_mismatch)
+
+        for los in cfg.chosen_LOS
+            grid == :healpix && _validate_healpix_los(los)
+            processed = grid == :healpix ? reference : _permuted_shape(reference, los)
+            expected = grid == :healpix ? nothing : Tuple(los_cube_shape(cfg.BoxLength_pix, los))
+            expected === nothing || processed == expected || throw_config_error(
+                "Preflight shape mismatch in $(simu) after LOS=$(los): expected $(expected), got $(processed)."; code=:cube_shape_mismatch)
+            nsky = processed[1] * processed[2]
+            nvox = prod(processed)
+            cube_elements = (want("integrated") ? nvox : 0) + (want("stokes") ? 5 * nsky * nfreq : 0) + (want("fdf") ? 3 * nsky * nphi : 0)
+            map_elements = nsky * ((want("integrated") ? 8 : 0) + (want("stokes") ? 2 : 0) + (want("rm") ? 1 : 0) + (want("fdf") ? 1 : 0) + (want("spectral_index") ? 2 : 0))
+            disk = (cube_elements + map_elements) * bytes_per
+            working_rows = cfg.tile_size === nothing ? processed[2] : min(cfg.tile_size, processed[2])
+            working_sky = processed[1] * working_rows
+            ram_elements = 7 * processed[1] * working_rows * processed[3] + (need_qu ? 2 * working_sky * nfreq : 0) + (need_t ? working_sky * nfreq : 0) + (want("fdf") ? 3 * working_sky * nphi : 0)
+            ram = ram_elements * bytes_per
+            work = (need_qu || need_t ? nsky * processed[3] * nfreq : 0) + (want("fdf") ? nsky * nfreq * nphi : 0)
+            total_disk += disk
+            total_voxel_channels += work
+            push!(entries, (; simulation=simu, los, grid, shape=processed, ram_bytes=ram, disk_bytes=disk, workload=work))
+            println(io, "- $(basename(simu)) LOS=$(los) grid=$(grid) shape=$(processed): peak RAM ≈ $(_human_bytes(ram)), FITS data ≈ $(_human_bytes(disk)), workload=$(work) cell-channel ops")
+        end
+    end
+    println(io, "Total estimated FITS data: $(_human_bytes(total_disk))")
+    println(io, "Total workload: $(total_voxel_channels) cell-channel ops")
+    println(io, "Estimates exclude FITS headers, plots, allocator overhead, filtering FFT work, and RM-CLEAN iterations.")
+    return (; frequency_channels=nfreq, faraday_channels=nphi, entries, disk_bytes=total_disk, workload=total_voxel_channels)
 end
 
 const DEFAULT_WOLFIRE_CONSTANTS = (2.5e-16, 1.0, 0.5, 1.4e-4)
@@ -517,6 +827,9 @@ function _run_moose_processing(cfg::RunConfig; quiet::Bool = false, persisted_co
     start_time = now()
     config_to_save = persisted_config === nothing ? config_dict_from_struct(cfg) : persisted_config
     config_hash = moose_config_hash(config_to_save)
+    resume_hash_config = Dict{String, Any}(String(k) => v for (k, v) in config_to_save)
+    delete!(resume_hash_config, "resume")
+    resume_hash = moose_config_hash(resume_hash_config)
     base_metadata = Dict{String, Any}(
         "MOOSEV" => moose_version(),
         "GITHASH" => moose_git_hash(),
@@ -547,11 +860,27 @@ function _run_moose_processing(cfg::RunConfig; quiet::Bool = false, persisted_co
         "INTFILE" => cfg.interpolation_file_path,
         "PRECIS" => cfg.precision,
         "TILESIZE" => cfg.tile_size,
+        "PHYMASK" => _has_physical_mask(cfg.physical_mask),
+        "MSKTMIN" => get(cfg.physical_mask, "T_min", nothing),
+        "MSKTMAX" => get(cfg.physical_mask, "T_max", nothing),
+        "MSKNMIN" => get(cfg.physical_mask, "n_min", nothing),
+        "MSKNMAX" => get(cfg.physical_mask, "n_max", nothing),
+        "DENSKIND" => cfg.density_kind,
+        "DENSMU" => cfg.mean_molecular_weight,
+        "MHG" => cfg.hydrogen_mass_g,
     )
     if cfg.ne_option == "3"
-        missing_cubes = [simu for simu in cfg.simulations if !isfile(joinpath(simu, "densityHp.fits"))]
+        missing_cubes = String[]
+        for simu in cfg.simulations
+            source = simulation_field_source(simu, "densityHp", cfg.field_sources)
+            try
+                _validate_simulation_source(source)
+            catch
+                push!(missing_cubes, simu)
+            end
+        end
         !isempty(missing_cubes) && throw_config_error(
-            "Electron density cube 'densityHp.fits' is missing for: $(join(missing_cubes, ", ")).";
+            "Electron density cube `densityHp` is missing for: $(join(missing_cubes, ", ")). Configure `field_sources.densityHp` if it is named differently.";
             code=:missing_density_cube,
         )
     end
@@ -568,10 +897,14 @@ function _run_moose_processing(cfg::RunConfig; quiet::Bool = false, persisted_co
         @info "Processing simulation" simulation = simu
 
         for LOS in cfg.chosen_LOS
+            if _can_resume_los(cfg, simu, LOS, resume_hash)
+                @info "Skipping completed line of sight" simulation=simu los=LOS manifest=joinpath(_los_output_root(simu, LOS), COMPLETION_MANIFEST)
+                continue
+            end
             @info "Processing line of sight" los = LOS
             box_length_pc = los_axis_value(cfg.BoxLength_pc, LOS)
             box_length_pix = los_axis_value(cfg.BoxLength_pix, LOS)
-            grid_kind = simulation_grid_kind(simu)
+            grid_kind = simulation_grid_kind(simu, cfg.field_sources)
             expected_shape = grid_kind == :healpix ? nothing : los_cube_shape(cfg.BoxLength_pix, LOS)
             PixelLength_pc, PixelLength_cm, DistanceArray = los_pixel_scale(box_length_pc, box_length_pix)
 
@@ -583,7 +916,10 @@ function _run_moose_processing(cfg::RunConfig; quiet::Bool = false, persisted_co
                     log_progress = cfg.log_progress, rng = rng, expected_shape = expected_shape, metadata = base_metadata,
                     rm_clean_enabled = cfg.rm_clean_enabled, rm_clean_gain = cfg.rm_clean_gain,
                     rm_clean_niter = cfg.rm_clean_niter, rm_clean_threshold = cfg.rm_clean_threshold,
-                    float_type = float_type, tile_rows = cfg.tile_size)
+                    float_type = float_type, tile_rows = cfg.tile_size, field_sources = cfg.field_sources,
+                    physical_mask = cfg.physical_mask, density_kind = cfg.density_kind,
+                    mean_molecular_weight = cfg.mean_molecular_weight, hydrogen_mass_g = cfg.hydrogen_mass_g,
+                    outputs = cfg.outputs)
             elseif cfg.ne_option == "2"
                 ProcessSynchrotron(simu, LOS, cfg.faraday_rotation, cfg.responseSynchrotron, df, cfg.add_noise, cfg.SNR_nu,
                     cfg.kernel_size_synchrotron, ion_fraction, nuArray, PhiArray, PixelLength_pc, PixelLength_cm,
@@ -591,7 +927,10 @@ function _run_moose_processing(cfg::RunConfig; quiet::Bool = false, persisted_co
                     log_progress = cfg.log_progress, rng = rng, expected_shape = expected_shape, metadata = base_metadata,
                     rm_clean_enabled = cfg.rm_clean_enabled, rm_clean_gain = cfg.rm_clean_gain,
                     rm_clean_niter = cfg.rm_clean_niter, rm_clean_threshold = cfg.rm_clean_threshold,
-                    float_type = float_type, tile_rows = cfg.tile_size)
+                    float_type = float_type, tile_rows = cfg.tile_size, field_sources = cfg.field_sources,
+                    physical_mask = cfg.physical_mask, density_kind = cfg.density_kind,
+                    mean_molecular_weight = cfg.mean_molecular_weight, hydrogen_mass_g = cfg.hydrogen_mass_g,
+                    outputs = cfg.outputs)
             else
                 ProcessSynchrotron(simu, LOS, cfg.faraday_rotation, cfg.responseSynchrotron, df, cfg.add_noise, cfg.SNR_nu,
                     cfg.kernel_size_synchrotron, nuArray, PhiArray, PixelLength_pc, PixelLength_cm,
@@ -599,8 +938,12 @@ function _run_moose_processing(cfg::RunConfig; quiet::Bool = false, persisted_co
                     log_progress = cfg.log_progress, rng = rng, expected_shape = expected_shape, metadata = base_metadata,
                     rm_clean_enabled = cfg.rm_clean_enabled, rm_clean_gain = cfg.rm_clean_gain,
                     rm_clean_niter = cfg.rm_clean_niter, rm_clean_threshold = cfg.rm_clean_threshold,
-                    float_type = float_type, tile_rows = cfg.tile_size)
+                    float_type = float_type, tile_rows = cfg.tile_size, field_sources = cfg.field_sources,
+                    physical_mask = cfg.physical_mask, density_kind = cfg.density_kind,
+                    mean_molecular_weight = cfg.mean_molecular_weight, hydrogen_mass_g = cfg.hydrogen_mass_g,
+                    outputs = cfg.outputs)
             end
+            _write_completion_manifest(cfg, simu, LOS, resume_hash)
         end
 
         if length(cfg.simulations) > 1
@@ -619,7 +962,8 @@ function _run_moose_processing(cfg::RunConfig; quiet::Bool = false, persisted_co
         config_source_path=source_config_path, config_saved_path=saved_config_path, config_hash=config_hash,
         faraday=cfg.faraday_rotation, rm_clean=cfg.rm_clean_enabled, responseSynchrotron=cfg.responseSynchrotron, add_noise=cfg.add_noise,
         interpolation_file_path=cfg.interpolation_file_path, conversionB=cfg.conversionB, conversionn=cfg.conversionn,
-        conversionT=cfg.conversionT, ne_option=cfg.ne_option, rng_seed=cfg.rng_seed)
+        conversionT=cfg.conversionT, ne_option=cfg.ne_option, rng_seed=cfg.rng_seed,
+        density_kind=cfg.density_kind, mean_molecular_weight=cfg.mean_molecular_weight, hydrogen_mass_g=cfg.hydrogen_mass_g)
 end
 
 
@@ -887,6 +1231,9 @@ function run_moose_interactive(; quiet::Bool = false, reset_config::Bool = true)
     config["chosen_LOS_input"] = uppercase(strip(los_choice)) == "ALL" ? "all" : join(valid_los, ",")
     chosen_LOS = valid_los
     config["chosen_LOS"] = chosen_LOS
+    field_sources = normalize_field_sources(get(config, "field_sources", get(config, "input_fields", nothing)))
+    physical_mask = normalize_physical_mask(get(config, "physical_mask", get(config, "mask", nothing)))
+    density_kind, mean_molecular_weight, hydrogen_mass_g = build_density_parameters(config)
 
     interpolation_default = get(config, "interpolation_file_path", joinpath(homedir(), "emissivity.dat"))
     interpolation_file_path = interpolation_default
@@ -927,9 +1274,17 @@ function run_moose_interactive(; quiet::Bool = false, reset_config::Bool = true)
         IonizationFraction = ask_user("Enter the ionization fraction for the alternative prescription", get(config, "IonizationFraction", 0.01))
         config["IonizationFraction"] = IonizationFraction
     elseif ne_option == "3"
-        missing_cubes = [simu for simu in chosen_simu if !isfile(joinpath(simu, "densityHp.fits"))]
+        missing_cubes = String[]
+        for simu in chosen_simu
+            source = simulation_field_source(simu, "densityHp", field_sources)
+            try
+                _validate_simulation_source(source)
+            catch
+                push!(missing_cubes, simu)
+            end
+        end
         if !isempty(missing_cubes)
-            throw_config_error("Electron density cube 'densityHp.fits' is missing for: $(join(missing_cubes, ", ")).";
+            throw_config_error("Electron density cube `densityHp` is missing for: $(join(missing_cubes, ", ")). Configure `field_sources.densityHp` if it is named differently.";
                 code=:missing_density_cube)
         end
     else
@@ -986,6 +1341,11 @@ function run_moose_interactive(; quiet::Bool = false, reset_config::Bool = true)
         rm_clean_gain = rm_clean_gain,
         rm_clean_niter = rm_clean_niter,
         rm_clean_threshold = rm_clean_threshold,
+        field_sources = field_sources,
+        physical_mask = physical_mask,
+        density_kind = density_kind,
+        mean_molecular_weight = mean_molecular_weight,
+        hydrogen_mass_g = hydrogen_mass_g,
     )
 
     return cfg, config

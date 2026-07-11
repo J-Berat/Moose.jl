@@ -63,6 +63,14 @@ end
     @test Moose.Pnu(q, u) == expected
 end
 
+@testset "Polarization fraction" begin
+    p = [2.0, 1.0, NaN, 4.0]
+    i = [4.0, 0.0, 3.0, -1.0]
+    frac = Moose.PolarizationFraction(p, i)
+    @test frac[1] == 0.5
+    @test all(isnan, frac[2:end])
+end
+
 @testset "Conversion Jy/beam ↔ K" begin
     intensity = [0.0, 1.5]
     nu = 1.0e9
@@ -97,6 +105,42 @@ end
     @test Moose.DM(cube, pixel_length) ≈ dropdims(sum(cube .* pixel_length, dims = 3), dims = 3)
     @test Moose.EM(cube, pixel_length) ≈ dropdims(sum(cube .^ 2 .* pixel_length, dims = 3), dims = 3)
     @test Moose.intLOS(cube, pixel_length) ≈ dropdims(sum(cube .* pixel_length, dims = 3), dims = 3)
+end
+
+@testset "Physical cell mask" begin
+    B1 = reshape(Float64.(1:8), 2, 2, 2)
+    B2 = copy(B1) .+ 10
+    BLOS = copy(B1) .+ 20
+    T = reshape([50.0, 100.0, 150.0, 200.0, 250.0, 300.0, 350.0, 400.0], 2, 2, 2)
+    n = reshape([0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8], 2, 2, 2)
+    nHp = copy(n) .+ 1.0
+
+    mask_cfg = Dict("T_min" => 150.0, "T_max" => 350.0, "n_min" => 0.3, "n_max" => 0.7)
+    expected = (T .>= 150.0) .& (T .<= 350.0) .& (n .>= 0.3) .& (n .<= 0.7)
+    mask = Moose._apply_physical_mask!(B1, B2, BLOS, T, n, nHp, mask_cfg)
+
+    @test mask == expected
+    @test all(iszero, B1[.!expected])
+    @test all(iszero, B2[.!expected])
+    @test all(iszero, BLOS[.!expected])
+    @test all(iszero, T[.!expected])
+    @test all(iszero, n[.!expected])
+    @test all(iszero, nHp[.!expected])
+    @test all(!iszero, B1[expected])
+end
+
+@testset "Density kind conversion" begin
+    mu = 1.4
+    mH = Moose.M_p
+    nH_expected = reshape([1.0, 2.0, 3.0, 4.0], 2, 2, 1)
+    rho = nH_expected .* (mu * mH)
+
+    out = Moose._density_to_number_density!(copy(rho), "mass_density", mu, mH)
+    @test out ≈ nH_expected
+
+    same = Moose._density_to_number_density!(copy(nH_expected), "number_density", mu, mH)
+    @test same == nH_expected
+    @test_throws ErrorException Moose._density_to_number_density!(copy(rho), "rho", mu, mH)
 end
 
 @testset "Moments" begin
@@ -268,6 +312,8 @@ end
 
 @testset "Regression — FITS header units (BUG-6)" begin
     @test Moose.DictHeader["Pnumax"]["bunit"] == "K"
+    @test Moose.DictHeader["polfrac"]["bunit"] == ""
+    @test Moose.DictHeader["polfracmax"]["bunit"] == ""
     @test Moose.DictHeader["intBLOS"]["bunit"] == "muG cm"
     @test Moose.DictHeader["intBtotal"]["bunit"] == "muG cm"
     @test Moose.DictHeader["intBperp"]["bunit"] == "muG cm"
@@ -371,6 +417,69 @@ end
 
         @test Moose.source_label(Moose.simulation_field_source(sim_dir, "Bx")) == "$(shared_path):fields/Bx"
         B1, B2, BLOS, T, n, nH2, nHp = Moose.ReadSimulation(sim_dir, "z", 1.0, 1.0, 1.0)
+        @test B1 == cube
+        @test B2 == cube .+ 1
+        @test BLOS == cube .+ 2
+        @test T == cube .+ 4
+        @test n == cube .+ 3
+        @test nH2 === nothing
+        @test nHp === nothing
+    end
+end
+
+@testset "Configurable simulation field sources" begin
+    cube = reshape(Float64.(1:8), 2, 2, 2)
+
+    mktempdir() do sim_dir
+        write_test_fits(joinpath(sim_dir, "magnetic_x.fits"), cube)
+        write_test_fits(joinpath(sim_dir, "magnetic_y.fits"), cube .+ 10)
+        write_test_fits(joinpath(sim_dir, "magnetic_z.fits"), cube .+ 20)
+        write_test_fits(joinpath(sim_dir, "nH.fits"), cube .+ 30)
+        write_test_fits(joinpath(sim_dir, "temp.fits"), cube .+ 40)
+        write_test_fits(joinpath(sim_dir, "electron.fits"), cube .+ 50)
+
+        field_sources = Dict(
+            "Bx" => "magnetic_x.fits",
+            "By" => "magnetic_y.fits",
+            "Bz" => "magnetic_z.fits",
+            "density" => "nH.fits",
+            "temperature" => "temp.fits",
+            "densityHp" => "electron.fits",
+        )
+
+        @test Moose.source_label(Moose.simulation_field_source(sim_dir, "Bx", field_sources)) == joinpath(sim_dir, "magnetic_x.fits")
+        @test Moose.simulation_grid_kind(sim_dir, field_sources) == :image
+
+        B1, B2, BLOS, T, n, nH2, nHp = Moose.ReadSimulation(sim_dir, "z", 2.0, 3.0, 4.0; field_sources = field_sources)
+        @test B1 == 4.0 .* cube
+        @test B2 == 4.0 .* (cube .+ 10)
+        @test BLOS == 4.0 .* (cube .+ 20)
+        @test T == 3.0 .* (cube .+ 40)
+        @test n == 2.0 .* (cube .+ 30)
+        @test nH2 === nothing
+        @test nHp == 2.0 .* (cube .+ 50)
+    end
+
+    mktempdir() do sim_dir
+        shared_path = joinpath(sim_dir, "simulation.h5")
+        h5open(shared_path, "w") do h5
+            h5["mhd/mag_x"] = cube
+            h5["mhd/mag_y"] = cube .+ 1
+            h5["mhd/mag_z"] = cube .+ 2
+            h5["gas/nH"] = cube .+ 3
+            h5["gas/temp"] = cube .+ 4
+        end
+
+        field_sources = Dict(
+            "Bx" => Dict("file" => "simulation.h5", "dataset" => "mhd/mag_x"),
+            "By" => Dict("file" => "simulation.h5", "dataset" => "mhd/mag_y"),
+            "Bz" => Dict("file" => "simulation.h5", "dataset" => "mhd/mag_z"),
+            "density" => Dict("file" => "simulation.h5", "dataset" => "gas/nH"),
+            "temperature" => Dict("file" => "simulation.h5", "dataset" => "gas/temp"),
+        )
+
+        @test Moose.source_label(Moose.simulation_field_source(sim_dir, "Bx", field_sources)) == "$(shared_path):mhd/mag_x"
+        B1, B2, BLOS, T, n, nH2, nHp = Moose.ReadSimulation(sim_dir, "z", 1.0, 1.0, 1.0; field_sources = field_sources)
         @test B1 == cube
         @test B2 == cube .+ 1
         @test BLOS == cube .+ 2
@@ -548,6 +657,20 @@ end
     @test overrides["FaradayRotation"] == "Y"
     @test overrides["add_noise"] == "N"
 
+    _, _, _, overrides = parse_cli_args(["--density-kind", "mass_density", "--mean-molecular-weight", "1.4", "--hydrogen-mass-g", "1.6726231e-24"])
+    @test overrides["density_kind"] == "mass_density"
+    @test overrides["mean_molecular_weight"] == 1.4
+    @test overrides["hydrogen_mass_g"] == 1.6726231e-24
+
+    _, _, _, overrides = parse_cli_args(["--resume", "safe"])
+    @test overrides["resume"] == "safe"
+
+    _, _, _, overrides = parse_cli_args(["--plan"])
+    @test overrides["__plan_only"] === true
+
+    _, _, _, overrides = parse_cli_args(["--outputs", "rm,fdf"])
+    @test overrides["outputs"] == ["rm", "fdf"]
+
     err = try
         parse_cli_args(["--write-back"])
         nothing
@@ -557,6 +680,18 @@ end
 
     @test err isa Moose.MooseError
     @test err.code == :cli_invalid_argument
+
+    missing_config = joinpath(tempdir(), "moose-missing-config-$(rand(UInt)).json")
+    err = try
+        parse_cli_args([missing_config])
+        nothing
+    catch e
+        e
+    end
+
+    @test err isa Moose.MooseError
+    @test err.code == :cli_invalid_argument
+    @test occursin("Config file not found", err.message)
 end
 
 @testset "Config validation" begin
@@ -630,6 +765,96 @@ end
         @test run_cfg.BoxLength_pc.z == 90.0
         @test run_cfg.BoxLength_pix == (; x = 128, y = 128, z = 128)
         @test run_cfg.rng_seed == 1234
+    end
+
+    mktempdir() do base_dir
+        sim_dir = joinpath(base_dir, "simu_fields")
+        mkdir(sim_dir)
+        interpolation_path = joinpath(base_dir, "emissivity.csv")
+        write(interpolation_path, "B\tnu\te_para\te_perp\n1.0\t120.0\t1.0\t2.0\n")
+
+        cfg = Dict(
+            "base_dir" => base_dir,
+            "simulations" => [sim_dir],
+            "interpolation_file_path" => interpolation_path,
+            "field_sources" => Dict(
+                "Bx" => "mag_x.fits",
+                "By" => "mag_y.fits",
+                "Bz" => "mag_z.fits",
+                "density" => "nH.fits",
+                "temperature" => Dict("file" => "gas.h5", "dataset" => "thermal/T"),
+            ),
+        )
+
+        run_cfg, _ = build_config(cfg, "config.json")
+        @test run_cfg.field_sources["Bx"] == "mag_x.fits"
+        @test run_cfg.field_sources["temperature"]["dataset"] == "thermal/T"
+    end
+
+    mktempdir() do base_dir
+        sim_dir = joinpath(base_dir, "simu_mask")
+        mkdir(sim_dir)
+        interpolation_path = joinpath(base_dir, "emissivity.csv")
+        write(interpolation_path, "B\tnu\te_para\te_perp\n1.0\t120.0\t1.0\t2.0\n")
+
+        cfg = Dict(
+            "base_dir" => base_dir,
+            "simulations" => [sim_dir],
+            "interpolation_file_path" => interpolation_path,
+            "physical_mask" => Dict(
+                "temperature_min" => 100.0,
+                "temperature_max" => 1.0e6,
+                "nH_min" => 1.0e-3,
+                "nH_max" => 10.0,
+            ),
+        )
+
+        run_cfg, _ = build_config(cfg, "config.json")
+        @test run_cfg.physical_mask["T_min"] == 100.0
+        @test run_cfg.physical_mask["T_max"] == 1.0e6
+        @test run_cfg.physical_mask["n_min"] == 1.0e-3
+        @test run_cfg.physical_mask["n_max"] == 10.0
+
+        cfg["physical_mask"]["temperature_min"] = 2.0e6
+        err = try
+            build_config(cfg, "config.json")
+            nothing
+        catch e
+            e
+        end
+        @test err isa Moose.MooseError
+        @test err.code == :invalid_physical_mask
+    end
+
+    mktempdir() do base_dir
+        sim_dir = joinpath(base_dir, "simu_density_kind")
+        mkdir(sim_dir)
+        interpolation_path = joinpath(base_dir, "emissivity.csv")
+        write(interpolation_path, "B\tnu\te_para\te_perp\n1.0\t120.0\t1.0\t2.0\n")
+
+        cfg = Dict(
+            "base_dir" => base_dir,
+            "simulations" => [sim_dir],
+            "interpolation_file_path" => interpolation_path,
+            "density_kind" => "mass_density",
+            "mean_molecular_weight" => 1.4,
+            "hydrogen_mass_g" => Moose.M_p,
+        )
+
+        run_cfg, _ = build_config(cfg, "config.json")
+        @test run_cfg.density_kind == "mass_density"
+        @test run_cfg.mean_molecular_weight == 1.4
+        @test run_cfg.hydrogen_mass_g == Moose.M_p
+
+        cfg["density_kind"] = "bad"
+        err = try
+            build_config(cfg, "config.json")
+            nothing
+        catch e
+            e
+        end
+        @test err isa Moose.MooseError
+        @test err.code == :invalid_density_kind
     end
 
     mktempdir() do base_dir
@@ -759,8 +984,19 @@ end
             "BoxLength_pix" => 2,
             "log_progress" => false,
             "rng_seed" => 7,
+            "resume" => "safe",
         )
         write(config_path, JSON.json(cfg))
+
+        run_cfg, _ = build_config(cfg, config_path)
+        plan_io = IOBuffer()
+        plan = Moose.preflight_plan(run_cfg; io=plan_io)
+        @test plan.frequency_channels == 2
+        @test plan.faraday_channels == 0
+        @test length(plan.entries) == 1
+        @test only(plan.entries).shape == (2, 2, 2)
+        @test plan.disk_bytes > 0
+        @test occursin("peak RAM", String(take!(plan_io)))
 
         Moose.MOOSE_from_config(config_path; quiet = true)
 
@@ -771,6 +1007,8 @@ end
         @test isfile(joinpath(result_dir, "Pnu.fits"))
         @test isfile(joinpath(result_dir, "Tnu.fits"))
         @test isfile(joinpath(result_dir, "Pnumax.fits"))
+        @test isfile(joinpath(result_dir, "polfrac.fits"))
+        @test isfile(joinpath(result_dir, "polfracmax.fits"))
         @test isfile(joinpath(result_dir, "alpha.fits"))
         @test isfile(joinpath(result_dir, "alpha_err.fits"))
         @test isfile(joinpath(result_dir, "polarization_angle_vs_lambda2.png"))
@@ -781,9 +1019,29 @@ end
         @test isfile(joinpath(sim_dir, "z", "Synchrotron", "ne.fits"))
         @test isfile(joinpath(base_dir, "MOOSE_summary.log"))
 
+        manifest_path = joinpath(sim_dir, "z", "Synchrotron", Moose.COMPLETION_MANIFEST)
+        @test isfile(manifest_path)
+        manifest_before = read(manifest_path, String)
+        manifest = JSON.parse(manifest_before)
+        @test manifest["status"] == "complete"
+        @test manifest["los"] == "z"
+        @test !isempty(manifest["outputs"])
+
+        # An identical safe-resume run must skip the completed LOS. The
+        # completion timestamp therefore remains byte-for-byte unchanged.
+        Moose.MOOSE_from_config(config_path; quiet = true)
+        @test read(manifest_path, String) == manifest_before
+
         qnu = read(FITS(joinpath(result_dir, "Qnu.fits"))[1])
         @test size(qnu) == (2, 2, 2)
         @test all(isfinite, qnu)
+        unu = read(FITS(joinpath(result_dir, "Unu.fits"))[1])
+        tnu = read(FITS(joinpath(result_dir, "Tnu.fits"))[1])
+        polfrac = read(FITS(joinpath(result_dir, "polfrac.fits"))[1])
+        polfracmax = read(FITS(joinpath(result_dir, "polfracmax.fits"))[1])
+        expected_polfrac = sqrt.(qnu .^ 2 .+ unu .^ 2) ./ tnu
+        @test all(isapprox.(polfrac, expected_polfrac; rtol = 1e-10))
+        @test polfracmax ≈ dropdims(maximum(polfrac, dims = 3), dims = 3)
 
         alpha = read(FITS(joinpath(result_dir, "alpha.fits"))[1])
         alpha_err = read(FITS(joinpath(result_dir, "alpha_err.fits"))[1])
@@ -820,6 +1078,25 @@ end
         summary_after_cli = read(joinpath(base_dir, "MOOSE_summary.log"), String)
         @test occursin("Config effective: $(config_path) + CLI overrides", summary_after_cli)
         @test occursin("Config saved: <not written>", summary_after_cli)
+    end
+end
+
+@testset "Selective RM-only outputs" begin
+    mktempdir() do dir
+        demo = make_demo_data(joinpath(dir, "selective"); npix=2)
+        cfg = JSON.parsefile(demo.config_path)
+        cfg["outputs"] = ["rm"]
+        cfg["rm_clean"] = Dict("enabled" => false)
+        write(demo.config_path, JSON.json(cfg))
+
+        Moose.MOOSE_from_config(demo.config_path; quiet=true)
+        root = joinpath(demo.simulation_dir, "z", "Synchrotron")
+        result = joinpath(root, "WithFaraday")
+        @test isfile(joinpath(result, "RMmap.fits"))
+        @test !isfile(joinpath(result, "Qnu.fits"))
+        @test !isfile(joinpath(result, "FDF.fits"))
+        @test !isfile(joinpath(result, "alpha.fits"))
+        @test !isfile(joinpath(root, "intBtotal.fits"))
     end
 end
 
@@ -929,6 +1206,8 @@ end
         @test isfile(joinpath(result_dir, "Qnu_0001_p1p0e8.fits"))
         @test isfile(joinpath(result_dir, "Unu_0002_p1p01e8.fits"))
         @test isfile(joinpath(result_dir, "Pnumax.fits"))
+        @test isfile(joinpath(result_dir, "polfrac_0001_p1p0e8.fits"))
+        @test isfile(joinpath(result_dir, "polfracmax.fits"))
         @test isfile(joinpath(result_dir, "alpha.fits"))
         @test isfile(joinpath(result_dir, "alpha_err.fits"))
         @test isfile(joinpath(result_dir, "FDF_0002_p0p0.fits"))
@@ -969,6 +1248,7 @@ end
         tnu = read(FITS(joinpath(result_dir, "Tnu.fits"))[1])
         qnu = read(FITS(joinpath(result_dir, "Qnu.fits"))[1])
         unu = read(FITS(joinpath(result_dir, "Unu.fits"))[1])
+        polfrac = read(FITS(joinpath(result_dir, "polfrac.fits"))[1])
         @test size(tnu, 3) == length(demo.expected.nu_MHz)
         for k in axes(tnu, 3)
             @test all(isapprox.(tnu[:, :, k], demo.expected.Tnu[k]; rtol = 1e-8))
@@ -979,6 +1259,7 @@ end
         # Faraday-thin emitter: no depolarization at any frequency.
         pol_fraction = sqrt.(qnu .^ 2 .+ unu .^ 2) ./ tnu
         @test all(isapprox.(pol_fraction, demo.expected.pol_fraction; rtol = 1e-8))
+        @test all(isapprox.(polfrac, demo.expected.pol_fraction; rtol = 1e-8))
 
         root_dir = joinpath(demo.simulation_dir, "z", "Synchrotron")
         intne = read(FITS(joinpath(root_dir, "intne.fits"))[1])
@@ -1006,6 +1287,7 @@ end
         qnu = read(FITS(joinpath(result_dir, "Qnu.fits"))[1])
         unu = read(FITS(joinpath(result_dir, "Unu.fits"))[1])
         tnu = read(FITS(joinpath(result_dir, "Tnu.fits"))[1])
+        polfrac = read(FITS(joinpath(result_dir, "polfrac.fits"))[1])
 
         # psi_src = π modulo π ⇒ Q/T = +pol_fraction, U ≈ 0.
         @test all(isapprox.(qnu ./ tnu, demo.expected.pol_fraction; atol = 1e-8))
@@ -1013,6 +1295,7 @@ end
 
         pol_fraction = sqrt.(qnu .^ 2 .+ unu .^ 2) ./ tnu
         @test all(isapprox.(pol_fraction, demo.expected.pol_fraction; rtol = 1e-8))
+        @test all(isapprox.(polfrac, demo.expected.pol_fraction; rtol = 1e-8))
 
         pol_angle = 0.5 .* atan.(unu, qnu)
         @test all(isapprox.(abs.(pol_angle), demo.expected.intrinsic_pol_angle; atol = 1e-8))
@@ -1089,8 +1372,8 @@ end
 
         products = [
             joinpath("WithFaraday", name) for name in
-            ("Qnu.fits", "Unu.fits", "Tnu.fits", "Pnu.fits", "FDF.fits",
-             "realFDF.fits", "imagFDF.fits", "RMmap.fits", "Pnumax.fits",
+            ("Qnu.fits", "Unu.fits", "Tnu.fits", "Pnu.fits", "polfrac.fits", "FDF.fits",
+             "realFDF.fits", "imagFDF.fits", "RMmap.fits", "Pnumax.fits", "polfracmax.fits",
              "Pmax.fits", "alpha.fits", "alpha_err.fits")
         ]
         append!(products, ["ne.fits", "intBtotal.fits", "sigmaBtotal.fits", "intne.fits",
@@ -1497,13 +1780,13 @@ end
         for name in ("ne",)
             @test isfile(joinpath(tiled_root, "$(name).fits"))
         end
-        for name in ("Qnu", "Unu", "Tnu", "Pnu", "FDF", "realFDF", "imagFDF")
+        for name in ("Qnu", "Unu", "Tnu", "Pnu", "polfrac", "FDF", "realFDF", "imagFDF")
             @test isfile(joinpath(tiled_result, "$(name).fits"))
         end
         for name in ("intBtotal", "intne", "sigmaT")
             @test isfile(joinpath(tiled_root, "$(name).fits"))
         end
-        for name in ("RMmap", "Pnumax", "Pmax", "alpha", "alpha_err", "RMSF")
+        for name in ("RMmap", "Pnumax", "polfracmax", "Pmax", "alpha", "alpha_err", "RMSF")
             @test isfile(joinpath(tiled_result, "$(name).fits"))
         end
 

@@ -3,6 +3,8 @@
   "simulations": [
     "simulation_001"
   ],
+  "field_sources": {},
+  "physical_mask": {},
   "chosen_LOS": [
     "x",
     "y",
@@ -11,6 +13,9 @@
   "conversionB": 1.0,
   "conversionn": 1.0,
   "conversionT": 1.0,
+  "density_kind": "number_density",
+  "mean_molecular_weight": 1.0,
+  "hydrogen_mass_g": 1.6726231e-24,
   "box": {
     "size_pc": 50.0,
     "npix": 256
@@ -45,5 +50,7 @@
     "ion_fraction": 0.01
   },
   "log_progress": false,
+  "resume": "off",
+  "outputs": ["all"],
   "config_path": "moose_config.json"
 }

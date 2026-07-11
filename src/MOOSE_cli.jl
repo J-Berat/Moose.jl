@@ -1,6 +1,6 @@
 using JSON
-using Moose: MooseError, cli_error, throw_cli_error
-using Moose.MooseFromConfig: MOOSE_from_config_dict
+using Moose: MooseError, cli_error, throw_cli_error, preflight_plan
+using Moose.MooseFromConfig: MOOSE_from_config_dict, build_config
 
 function parse_numeric(name, value)
     parsed = tryparse(Float64, value)
@@ -24,6 +24,13 @@ end
 function parse_ne_option(value)
     normalized = string(value)
     normalized in ("1", "2", "3") || throw_cli_error("--ne-option expects 1, 2, or 3, got '$(value)'.")
+    return normalized
+end
+
+function parse_density_kind(value)
+    normalized = lowercase(strip(String(value)))
+    normalized in ("number_density", "mass_density") ||
+        throw_cli_error("--density-kind expects number_density or mass_density, got '$(value)'.")
     return normalized
 end
 
@@ -87,6 +94,18 @@ function parse_cli_args(args)
             i += 1
             i > length(args) && throw_cli_error("--conversionT expects a value")
             overrides["conversionT"] = parse_numeric("--conversionT", args[i])
+        elseif arg == "--density-kind"
+            i += 1
+            i > length(args) && throw_cli_error("--density-kind expects number_density or mass_density")
+            overrides["density_kind"] = parse_density_kind(args[i])
+        elseif arg == "--mean-molecular-weight"
+            i += 1
+            i > length(args) && throw_cli_error("--mean-molecular-weight expects a value")
+            overrides["mean_molecular_weight"] = parse_numeric("--mean-molecular-weight", args[i])
+        elseif arg == "--hydrogen-mass-g"
+            i += 1
+            i > length(args) && throw_cli_error("--hydrogen-mass-g expects a value")
+            overrides["hydrogen_mass_g"] = parse_numeric("--hydrogen-mass-g", args[i])
         elseif arg == "--faraday"
             i += 1
             i > length(args) && throw_cli_error("--faraday expects Y or N")
@@ -155,10 +174,24 @@ function parse_cli_args(args)
             tile_value = parse_integer("--tile-size", args[i])
             tile_value > 0 || throw_cli_error("--tile-size expects a positive integer, got '$(args[i])'.")
             overrides["tile_size"] = tile_value
+        elseif arg == "--resume"
+            i += 1
+            i > length(args) && throw_cli_error("--resume expects off or safe")
+            resume_value = lowercase(strip(args[i]))
+            resume_value in ("off", "safe") || throw_cli_error("--resume expects off or safe, got '$(args[i])'.")
+            overrides["resume"] = resume_value
+        elseif arg == "--outputs"
+            i += 1
+            i > length(args) && throw_cli_error("--outputs expects a comma-separated list")
+            output_values = [strip(lowercase(value)) for value in split(args[i], ",") if !isempty(strip(value))]
+            isempty(output_values) && throw_cli_error("--outputs expects at least one output group")
+            overrides["outputs"] = output_values
         elseif arg == "--quiet"
             quiet = true
         elseif arg == "--write-back"
             write_back = true
+        elseif arg == "--plan"
+            overrides["__plan_only"] = true
         else
             if !startswith(arg, "--") && config_path === nothing
                 config_path = arg
@@ -174,6 +207,7 @@ function parse_cli_args(args)
     interpolation_file === nothing || (overrides["interpolation_file_path"] = interpolation_file)
 
     write_back && config_path === nothing && throw_cli_error("--write-back requires a config path (positional or via --config).")
+    config_path !== nothing && !isfile(config_path) && throw_cli_error("Config file not found: $(config_path)")
 
     return config_path, quiet, write_back, overrides
 end
@@ -188,6 +222,14 @@ end
 
 function run_with_config(config_path, quiet, write_back, overrides)
     cfg = merge(load_base_config(config_path), overrides)
+    plan_only = pop!(cfg, "__plan_only", false)
+
+    if plan_only
+        effective_path = config_path === nothing ? "<cli-overrides>" : "$(config_path) + CLI overrides"
+        run_config, _ = build_config(cfg, effective_path)
+        preflight_plan(run_config)
+        return nothing
+    end
 
     if write_back
         Moose.save_config(cfg, config_path)

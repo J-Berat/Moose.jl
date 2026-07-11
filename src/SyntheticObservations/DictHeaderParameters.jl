@@ -23,6 +23,7 @@ const DictHeader = Dict(
     "Qnu" => header_params(naxis=3, ctype3="FREQ", cunit3="Hz", bunit="K"),
     "Unu" => header_params(naxis=3, ctype3="FREQ", cunit3="Hz", bunit="K"),
     "Pnu" => header_params(naxis=3, ctype3="FREQ", cunit3="Hz", bunit="K"),
+    "polfrac" => header_params(naxis=3, ctype3="FREQ", cunit3="Hz", bunit=""),
     "TbHI" => header_params(naxis=3, ctype3="VEL", cunit1="deg", cunit2="deg", cunit3="km/s", bunit="K"),
     "tauHI" => header_params(naxis=3, ctype3="VEL", cunit3="km/s", bunit="K"),
     "TbthinHI" => header_params(naxis=3, ctype3="VEL", cunit3="km/s", bunit="K"),
@@ -53,6 +54,7 @@ const DictHeader = Dict(
     "sigmaT" => header_params(naxis=2, bunit="K"),
     "Pmax" => header_params(naxis=2, bunit="K"),
     "Pnumax" => header_params(naxis=2, bunit="K"),
+    "polfracmax" => header_params(naxis=2, bunit=""),
     "RMmap" => header_params(naxis=2, bunit="rad.m^{-2}"),
     "alpha" => header_params(naxis=2, bunit=""),
     "alpha_err" => header_params(naxis=2, bunit=""),
@@ -72,4 +74,4 @@ const DictHeader = Dict(
 )
 #ListDataName = ["T_nu", "Qnu", "Unu", "TbHI", "tauHI", "TbthinHI", "TbCNM", "tauCNM", "TbthinCNM", "TbWNM", "tauWNM", "TbthinWNM", "ne",  "NHI", "NCNM", "NLNM", "NWNM", "intne", "intBLOS", "Pmax", "Pnumax", "RMmap", "FDF", "realFDF", "imagFDF"]
 
-ListDataName = ["Qnu", "Unu", "ne", "intne", "intBLOS","Pnu", "Pmax", "Pnumax", "RMmap", "FDF", "realFDF", "imagFDF", "cleanFDF", "realCleanFDF", "imagCleanFDF", "residualFDF"]
+ListDataName = ["Qnu", "Unu", "ne", "intne", "intBLOS","Pnu", "polfrac", "Pmax", "Pnumax", "polfracmax", "RMmap", "FDF", "realFDF", "imagFDF", "cleanFDF", "realCleanFDF", "imagCleanFDF", "residualFDF"]
