@@ -948,7 +948,7 @@ function _run_moose_processing(cfg::RunConfig; quiet::Bool = false, persisted_co
 
         if length(cfg.simulations) > 1
             @info "Finished processing all chosen LOS" simulation = simu
-            print_progress(i, length(cfg.simulations))
+            print_progress(i, length(cfg.simulations); label="Completed simulations")
         end
     end
 

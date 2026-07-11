@@ -94,7 +94,7 @@ function radial_psd(field::AbstractMatrix; pixel_size::Real = 1.0, nbins::Union{
             bin_counts[bin] += 1
             processed += 1
             if log_progress && processed % progress_step == 0
-                print_progress(processed, total_points)
+                print_progress(processed, total_points; label="Power-spectrum radial binning")
                 @debug "Radial PSD binning" processed = processed total = total_points
             end
         end

@@ -100,7 +100,7 @@ function RMSynthesis(Q::AbstractArray, U::AbstractArray, nuArray::AbstractArray,
 
             LinearAlgebra.mul!(view(F, :, i), Pmat, phase, T(K), zero(T))
             if log_progress
-                print_progress(i, nPhi)
+                print_progress(i, nPhi; label="RM synthesis")
                 @debug "RM synthesis accumulation" idx = i total = nPhi
             end
         end
@@ -117,7 +117,7 @@ function RMSynthesis(Q::AbstractArray, U::AbstractArray, nuArray::AbstractArray,
 
             LinearAlgebra.mul!(view(Fvalid, :, i), Pvalid, phase, T(K), zero(T))
             if log_progress
-                print_progress(i, nPhi)
+                print_progress(i, nPhi; label="RM synthesis")
                 @debug "RM synthesis accumulation" idx = i total = nPhi
             end
         end
@@ -194,7 +194,7 @@ function getRMSF(nuArray::AbstractArray, PhiArray::AbstractArray; log_progress::
         end
         RMSF[i] = K * sum(phase)
         if log_progress
-            print_progress(i, nPhi)
+            print_progress(i, nPhi; label="RMSF computation")
             @debug "RMSF accumulation" idx = i total = nPhi
         end
     end

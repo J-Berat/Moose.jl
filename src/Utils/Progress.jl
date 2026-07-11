@@ -2,7 +2,7 @@
 Simple progress bar used when iterating over simulations.
 """
 
-function print_progress(progress::Int, total::Int)
+function print_progress(progress::Int, total::Int; label::AbstractString="Progress")
     @assert total > 0 "Total must be greater than 0."
     @assert 0 <= progress <= total "Progress must be between 0 and total."
 
@@ -20,7 +20,8 @@ function print_progress(progress::Int, total::Int)
 
     percentage = Int(round(100 * progress_ratio))
 
-    print("\rProgress: |$filled_bar$empty_bar| $progress/$total ($percentage%)")
+    display_label = isempty(strip(label)) ? "Progress" : strip(label)
+    print("\r$(display_label): |$filled_bar$empty_bar| $progress/$total ($percentage%)")
     flush(stdout)
 
     if progress == total

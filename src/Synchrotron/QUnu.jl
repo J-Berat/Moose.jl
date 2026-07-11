@@ -234,14 +234,14 @@ function QUnu3D(Bperpcube, psi_src, RM, nuArray, df, PixelLength_cm; log_progres
             done = Threads.atomic_add!(progress_counter, 1) + 1
             if done % progress_step == 0
                 lock(progress_lock) do
-                    print_progress(done, total_pixels)
+                    print_progress(done, total_pixels; label="Computing Q/U (Faraday)")
                 end
             end
         end
     end
 
     if log_progress && total_pixels > 0
-        print_progress(total_pixels, total_pixels)
+        print_progress(total_pixels, total_pixels; label="Computing Q/U (Faraday)")
     end
 
     return Qnu, Unu
@@ -373,14 +373,14 @@ function QUnuNoFaraday3D(Bperpcube, psi_src, nuArray, df, PixelLength_cm; log_pr
             done = Threads.atomic_add!(progress_counter, 1) + 1
             if done % progress_step == 0
                 lock(progress_lock) do
-                    print_progress(done, total_pixels)
+                    print_progress(done, total_pixels; label="Computing Q/U")
                 end
             end
         end
     end
 
     if log_progress && total_pixels > 0
-        print_progress(total_pixels, total_pixels)
+        print_progress(total_pixels, total_pixels; label="Computing Q/U")
     end
 
     return Qnu, Unu

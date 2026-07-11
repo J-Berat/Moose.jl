@@ -510,7 +510,7 @@ function _process_synchrotron_tiled_healpix(
                 _write_healpix_band!(fdf_streams[3], imagFDF, jr)
             end
 
-            log_progress && print_progress(band_index, length(bands))
+            log_progress && print_progress(band_index, length(bands); label="Processing HEALPix bands")
         end
 
         for sc in streams
@@ -746,7 +746,7 @@ function _process_synchrotron_tiled(
                 _write_band!(fdf_streams[3], imagFDF, jr)
             end
 
-            log_progress && print_progress(band_index, length(bands))
+            log_progress && print_progress(band_index, length(bands); label="Processing sky bands")
         end
 
         for sc in streams

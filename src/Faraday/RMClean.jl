@@ -177,7 +177,7 @@ function rmclean(realFDF::AbstractArray, imagFDF::AbstractArray, PhiArray::Abstr
                 modelMat[p, k] = nan_spectrum
                 residualMat[p, k] = nan_spectrum
             end
-            log_progress && print_progress(p, npix)
+            log_progress && print_progress(p, npix; label="RM-CLEAN")
             continue
         end
         restored, model, residual, _ = rmclean_1d(spectrum, diag.rmsf, rmsf_center, dphi, diag.fwhm;
@@ -187,7 +187,7 @@ function rmclean(realFDF::AbstractArray, imagFDF::AbstractArray, PhiArray::Abstr
             modelMat[p, k] = model[k]
             residualMat[p, k] = residual[k]
         end
-        log_progress && print_progress(p, npix)
+        log_progress && print_progress(p, npix; label="RM-CLEAN")
     end
 
     restored = reshape(restoredMat, sz)
