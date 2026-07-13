@@ -6,6 +6,13 @@ Prompting helpers shared by the interactive workflows.
 
 const _PROMPT_MARK = "▸"
 
+"""Print a SHINE-style heading for a group of interactive prompts."""
+function prompt_section(title::AbstractString)
+    println()
+    printstyled("╭─ ", title, "\n"; color = :light_cyan, bold = true)
+    flush(stdout)
+end
+
 # Strip a trailing colon / whitespace so we can append " [default]: " cleanly,
 # regardless of how the caller phrased the prompt.
 _clean_prompt(prompt::AbstractString) = rstrip(rstrip(prompt), ':') |> rstrip

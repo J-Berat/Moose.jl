@@ -319,7 +319,7 @@ function normalize_field_sources(value)
     value === nothing && return Dict{String, Any}()
     value isa AbstractDict || throw_config_error("`field_sources` must be an object mapping canonical field names to paths or HDF5 datasets."; code=:invalid_field_sources)
 
-    allowed = Set((REQUIRED_SIMULATION_FIELDS..., OPTIONAL_SIMULATION_FIELDS...))
+    allowed = Set((REQUIRED_SIMULATION_FIELDS..., OPTIONAL_SIMULATION_FIELDS..., "amr"))
     field_sources = Dict{String, Any}()
     for (key, spec) in value
         field = String(key)
@@ -627,11 +627,24 @@ function _resume_input_paths(cfg::RunConfig, simu::AbstractString)
     paths = String[cfg.interpolation_file_path]
     for field in ("Bx", "By", "Bz", "density", "temperature")
         source = simulation_field_source(simu, field, cfg.field_sources)
-        source isa AbstractString ? push!(paths, source) : append!(paths, String.(source))
+        if source isa AbstractVector
+            append!(paths, source_path.(source))
+        else
+            push!(paths, source_path(source))
+        end
     end
     if cfg.ne_option == "3"
         source = simulation_field_source(simu, "densityHp", cfg.field_sources)
-        source isa AbstractString ? push!(paths, source) : append!(paths, String.(source))
+        if source isa AbstractVector
+            append!(paths, source_path.(source))
+        else
+            push!(paths, source_path(source))
+        end
+    end
+    amr = amr_config(cfg.field_sources)
+    if amr !== nothing
+        reference = simulation_field_source(simu, "Bx", cfg.field_sources)
+        push!(paths, _amr_geometry_file(simu, amr, source_path(reference)))
     end
     return sort!(unique!(abspath.(paths)))
 end
@@ -700,6 +713,9 @@ function _fits_image_shape(path::AbstractString)
 end
 
 function _source_shape(source, grid_kind::Symbol)
+    if grid_kind == :amr
+        error("AMR source shapes require the AMR geometry configuration.")
+    end
     if source isa HDF5DatasetSource
         return h5open(source.file, "r") do h5
             Tuple(Int.(size(h5[source.dataset])))
@@ -753,16 +769,41 @@ function preflight_plan(cfg::RunConfig; io::IO=stdout)
     println(io, "Frequency channels: $(nfreq)" * (nphi > 0 ? " | Faraday-depth channels: $(nphi)" : ""))
     for simu in cfg.simulations
         grid = simulation_grid_kind(simu, cfg.field_sources)
+        grid == :amr && cfg.tile_size !== nothing && throw_config_error(
+            "`tile_size` is not supported with AMR inputs because rasterization must validate the complete leaf-cell coverage.";
+            code=:unsupported_grid_operation)
+        amr_geometry = if grid == :amr
+            reference = simulation_field_source(simu, "Bx", cfg.field_sources)
+            load_amr_geometry(simu, amr_config(cfg.field_sources), source_path(reference))
+        else
+            nothing
+        end
         shapes = Dict{String, Tuple}()
         for field in ("Bx", "By", "Bz", "density", "temperature")
             source = simulation_field_source(simu, field, cfg.field_sources)
             _validate_simulation_source(source)
-            shapes[field] = _source_shape(source, grid)
+            if grid == :amr
+                field_shape = _source_shape(source, :image)
+                prod(field_shape) == size(amr_geometry.centers, 1) || throw_config_error(
+                    "AMR field $(field) has $(prod(field_shape)) values but the geometry has $(size(amr_geometry.centers, 1)) cells.";
+                    code=:cube_shape_mismatch)
+                shapes[field] = amr_geometry.shape
+            else
+                shapes[field] = _source_shape(source, grid)
+            end
         end
         cfg.ne_option == "3" && begin
             source = simulation_field_source(simu, "densityHp", cfg.field_sources)
             _validate_simulation_source(source)
-            shapes["densityHp"] = _source_shape(source, grid)
+            if grid == :amr
+                field_shape = _source_shape(source, :image)
+                prod(field_shape) == size(amr_geometry.centers, 1) || throw_config_error(
+                    "AMR field densityHp has $(prod(field_shape)) values but the geometry has $(size(amr_geometry.centers, 1)) cells.";
+                    code=:cube_shape_mismatch)
+                shapes["densityHp"] = amr_geometry.shape
+            else
+                shapes["densityHp"] = _source_shape(source, grid)
+            end
         end
         reference = shapes["Bx"]
         length(reference) == 3 || error("Simulation field Bx must be 3D; got $(reference).")
@@ -1031,6 +1072,7 @@ function run_moose_interactive(; quiet::Bool = false, reset_config::Bool = true)
     end
 
     default_config_path = joinpath(pwd(), "moose_config.json")
+    prompt_section("Configuration source")
     if reset_config
         println("[Info] Previous configuration ignored (reset_config=true)")
         config = Dict{String, Any}()
@@ -1040,6 +1082,7 @@ function run_moose_interactive(; quiet::Bool = false, reset_config::Bool = true)
         config = load_previous_config(config_path)
     end
 
+    prompt_section("Simulation directory")
     base_dir = ""
     simu_list = String[]
     while true
@@ -1062,6 +1105,7 @@ function run_moose_interactive(; quiet::Bool = false, reset_config::Bool = true)
     end
     config["base_dir"] = base_dir
 
+    prompt_section("Simulation selection")
     display_simulations(simu_list)
 
     simu_prompt = "Enter 'all' to process all simulations or provide comma-separated indices (e.g., 1,3,5)"
@@ -1104,6 +1148,7 @@ function run_moose_interactive(; quiet::Bool = false, reset_config::Bool = true)
     end
     config["chosen_simu"] = chosen_simu
 
+    prompt_section("Unit conversions (to μG, cm⁻³, K)")
     conversionB = ask_user("Enter the conversion factor for magnetic field B to μG (microGauss)", Float64(get(config, "conversionB", 1.0)))
     conversionn = ask_user("Enter the conversion factor for number density n to cm^-3", Float64(get(config, "conversionn", 1.0)))
     conversionT = ask_user("Enter the conversion factor for temperature T to K", Float64(get(config, "conversionT", 1.0)))
@@ -1111,11 +1156,13 @@ function run_moose_interactive(; quiet::Bool = false, reset_config::Bool = true)
     config["conversionn"] = conversionn
     config["conversionT"] = conversionT
 
+    prompt_section("Simulation geometry")
     BoxLength_pc = ask_user("Side of the Box size (pc), please give a Float", Float64(get(config, "BoxLength_pc", 50.0)))
     BoxLength_pix = ask_user("Number of pixels along the line of sight", Int(get(config, "BoxLength_pix", 256)))
     config["BoxLength_pc"] = BoxLength_pc
     config["BoxLength_pix"] = BoxLength_pix
 
+    prompt_section("Frequency setup")
     nustart = ask_user("Frequency range start (MHz)", Float64(get(config, "nustart", 120)))
     nuend = ask_user("Frequency range end (MHz)", Float64(get(config, "nuend", 167)))
     dnu = ask_user("Frequency resolution (MHz)", Float64(get(config, "dnu", 0.098)))
@@ -1123,7 +1170,8 @@ function run_moose_interactive(; quiet::Bool = false, reset_config::Bool = true)
     config["nuend"] = nuend
     config["dnu"] = dnu
 
-    FaradayRotation = ask_user("Do you want to include Faraday rotation in the computation of Q and U? (Y/N)", get(config,"FaradayRotation", "N");
+    prompt_section("Faraday rotation")
+    FaradayRotation = ask_user("Do you want to include Faraday rotation in the computation of Q and U? (Y/N)", get(config,"FaradayRotation", "Y");
         validate = is_yes_no, error_message = "Please answer Y or N.")
     faraday_flag = uppercase(FaradayRotation)
     config["FaradayRotation"] = FaradayRotation
@@ -1172,6 +1220,7 @@ function run_moose_interactive(; quiet::Bool = false, reset_config::Bool = true)
     )
     config["do_rm_clean"] = rm_clean_enabled
 
+    prompt_section("Instrumental effects")
     responseSynchrotron = ask_user("Do you want to perform interferometric Fourier filtering for Synchrotron data? (Y/N)", get(config, "responseSynchrotron", "N");
         validate = is_yes_no, error_message = "Please answer Y or N.")
     kernel_size_synchrotron = uppercase(responseSynchrotron) == "Y" ? ask_user("Largest Fourier scale to keep for Synchrotron filtering (in pixels, e.g. 154)", get(config, "kernel_size_synchrotron", 154.0)) : nothing
@@ -1193,6 +1242,7 @@ function run_moose_interactive(; quiet::Bool = false, reset_config::Bool = true)
     end
     config["rng_seed"] = rng_seed
 
+    prompt_section("Lines of sight")
     list_LOS = ["x", "y", "z"]
     los_prompt = "Enter 'all' to process all lines of sight (x, y, z) or specify comma-separated ones (e.g., x,y):"
 
@@ -1235,6 +1285,7 @@ function run_moose_interactive(; quiet::Bool = false, reset_config::Bool = true)
     physical_mask = normalize_physical_mask(get(config, "physical_mask", get(config, "mask", nothing)))
     density_kind, mean_molecular_weight, hydrogen_mass_g = build_density_parameters(config)
 
+    prompt_section("Synchrotron emissivity")
     interpolation_default = get(config, "interpolation_file_path", joinpath(homedir(), "emissivity.dat"))
     interpolation_file_path = interpolation_default
     while true
@@ -1248,6 +1299,7 @@ function run_moose_interactive(; quiet::Bool = false, reset_config::Bool = true)
     end
     config["interpolation_file_path"] = interpolation_file_path
 
+    prompt_section("Electron density")
     ne_option = ""
     while true
         ne_option = ask_user("Choose electron density prescription: (1) Wolfire et al. 2003, (2) Proportional to nH, (3) Provide ne cube", get(config, "ne_option", "1"))
@@ -1306,6 +1358,7 @@ function run_moose_interactive(; quiet::Bool = false, reset_config::Bool = true)
         ))
     end
 
+    prompt_section("Save configuration")
     save_path_default = get(config, "config_path", joinpath(base_dir, "moose_config.json"))
     config_path = ask_user("Enter the path where the configuration should be saved", save_path_default)
     config["config_path"] = config_path

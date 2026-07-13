@@ -36,6 +36,39 @@ imagF = [...]
 ```
 """
 
+const _RM_SYNTHESIS_BLOCK_SIZE = 64
+
+function _rmsynthesis_mul!(F::AbstractMatrix{CT}, P::AbstractMatrix{CT}, a,
+                           PhiArray, scale::T; log_progress::Bool = false) where {T<:Real, CT<:Complex{T}}
+    nlambda = size(P, 2)
+    nphi = length(PhiArray)
+    block_size = min(_RM_SYNTHESIS_BLOCK_SIZE, max(nphi, 1))
+    phases = Matrix{CT}(undef, nlambda, block_size)
+
+    # Process several Faraday depths at once. This turns the former sequence
+    # of BLAS level-2 matrix-vector products into level-3 matrix-matrix
+    # products while bounding temporary storage to nlambda * block_size.
+    for first_phi in 1:block_size:nphi
+        last_phi = min(first_phi + block_size - 1, nphi)
+        width = last_phi - first_phi + 1
+        @inbounds for column in 1:width
+            phi = Float64(PhiArray[first_phi + column - 1])
+            for l in eachindex(a)
+                phases[l, column] = CT(cis(-2.0 * phi * a[l]))
+            end
+        end
+
+        LinearAlgebra.mul!(view(F, :, first_phi:last_phi), P,
+                           view(phases, :, 1:width), scale, zero(T))
+        if log_progress
+            print_progress(last_phi, nphi; label="RM synthesis")
+            @debug "RM synthesis accumulation" idx = last_phi total = nphi
+        end
+    end
+
+    return F
+end
+
 function RMSynthesis(Q::AbstractArray, U::AbstractArray, nuArray::AbstractArray, PhiArray::AbstractArray; log_progress::Bool = false)
 
     log_progress && @info "Starting RM synthesis" n_phi = length(PhiArray) n_lambda = length(nuArray)
@@ -70,8 +103,6 @@ function RMSynthesis(Q::AbstractArray, U::AbstractArray, nuArray::AbstractArray,
     a = (LambdaSqArray .- Lambda0Sq)
 
     Pmat = reshape(P, nx * ny, nLambda)
-    phase = Vector{CT}(undef, nLambda)
-
     # Masked pixels (NaN from HEALPix UNSEEN or partial-sky maps) are skipped:
     # their FDF is NaN by definition, so there is no point running the
     # matrix product over them.
@@ -92,35 +123,13 @@ function RMSynthesis(Q::AbstractArray, U::AbstractArray, nuArray::AbstractArray,
 
     if nvalid == npix_total
         F = Matrix{CT}(undef, npix_total, nPhi)
-        for i in 1:nPhi
-            phi = Float64(PhiArray[i])
-            @inbounds for l in eachindex(a)
-                phase[l] = CT(cis(-2.0 * phi * a[l]))
-            end
-
-            LinearAlgebra.mul!(view(F, :, i), Pmat, phase, T(K), zero(T))
-            if log_progress
-                print_progress(i, nPhi; label="RM synthesis")
-                @debug "RM synthesis accumulation" idx = i total = nPhi
-            end
-        end
+        _rmsynthesis_mul!(F, Pmat, a, PhiArray, T(K); log_progress)
     else
         log_progress && @info "Skipping masked pixels in RM synthesis" masked = npix_total - nvalid total = npix_total
         rows = findall(valid)
         Pvalid = Pmat[rows, :]
         Fvalid = Matrix{CT}(undef, nvalid, nPhi)
-        for i in 1:nPhi
-            phi = Float64(PhiArray[i])
-            @inbounds for l in eachindex(a)
-                phase[l] = CT(cis(-2.0 * phi * a[l]))
-            end
-
-            LinearAlgebra.mul!(view(Fvalid, :, i), Pvalid, phase, T(K), zero(T))
-            if log_progress
-                print_progress(i, nPhi; label="RM synthesis")
-                @debug "RM synthesis accumulation" idx = i total = nPhi
-            end
-        end
+        _rmsynthesis_mul!(Fvalid, Pvalid, a, PhiArray, T(K); log_progress)
         F = fill(CT(T(NaN), T(NaN)), npix_total, nPhi)
         F[rows, :] = Fvalid
     end

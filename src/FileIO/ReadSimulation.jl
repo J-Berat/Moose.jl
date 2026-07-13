@@ -213,6 +213,15 @@ function simulation_grid_kind(simu::AbstractString, field_sources=nothing)
 
     sources = [simulation_field_source(simu, field, field_sources) for field in REQUIRED_SIMULATION_FIELDS]
     foreach(_validate_simulation_source, sources)
+    amr = amr_config(field_sources)
+    if amr !== nothing
+        all(source -> source isa HDF5DatasetSource, sources) || throw_config_error(
+            "AMR fields must all be configured as HDF5 datasets with `path` and `dataset`.";
+            code=:invalid_field_sources)
+        _amr_shape(amr)
+        _amr_bounds(amr)
+        return :amr
+    end
     kinds = _source_grid_kind.(sources)
     length(unique(kinds)) == 1 ||
         error("Simulation $(simu) mixes regular image cubes and HEALPix FITS tables. Use one grid type per run.")
@@ -319,10 +328,11 @@ function read_grid_stack(source, conversion::Real=1.0; kwargs...)
     return read_grid_stack([source], conversion; kwargs...)
 end
 
-function read_required_grid(source, conversion; hp_target=nothing)
+function read_required_grid(source, conversion; hp_target=nothing, amr_geometry=nothing)
     _validate_simulation_source(source)
 
     try
+        amr_geometry !== nothing && return read_amr_field(source, conversion, amr_geometry)
         grid = read_grid_stack(source, conversion; column=:all, expected_ndims = nothing)
         if grid isa AbstractArray
             _validate_fits_array(grid, source_label(source isa AbstractVector ? first(source) : source); expected_ndims = 3)
@@ -353,12 +363,16 @@ function read_optional_cube(file, conversion, LOS)
     end
 end
 
-function read_optional_grid(source, conversion, LOS, grid_kind; hp_target=nothing)
+function read_optional_grid(source, conversion, LOS, grid_kind; hp_target=nothing, amr_geometry=nothing)
     exists = source isa HDF5DatasetSource ? isfile(source.file) : source isa AbstractString ? isfile(source) : !isempty(source)
     exists || return nothing
 
     if grid_kind == :healpix
         return read_required_grid(source, conversion; hp_target = hp_target)
+    end
+
+    if grid_kind == :amr
+        return permute_dims(read_required_grid(source, conversion; amr_geometry = amr_geometry), LOS)
     end
 
     if source isa AbstractString && _is_fits_path(source)
@@ -385,24 +399,25 @@ function ReadSimulation(simu, LOS, conversionn, conversionT, conversionV, conver
     grid_kind = simulation_grid_kind(simu, field_sources)
     grid_kind == :healpix && _validate_healpix_los(LOS)
     hp_target = grid_kind == :healpix ? _healpix_target_from_source(fileBx) : nothing
+    amr_geometry = grid_kind == :amr ? load_amr_geometry(simu, amr_config(field_sources), source_path(fileBx)) : nothing
 
     required_files = [fileBx, fileBy, fileBz, filen, fileT, fileVx, fileVy, fileVz]
     foreach(_validate_simulation_source, required_files)
 
-    T = read_required_grid(fileT, conversionT; hp_target = hp_target)
-    n = read_required_grid(filen, conversionn; hp_target = hp_target)
-    nH2 = read_optional_grid(filenH2, conversionn, LOS, grid_kind; hp_target = hp_target)
-    nHp = read_optional_grid(filenHp, conversionn, LOS, grid_kind; hp_target = hp_target)
+    T = read_required_grid(fileT, conversionT; hp_target = hp_target, amr_geometry = amr_geometry)
+    n = read_required_grid(filen, conversionn; hp_target = hp_target, amr_geometry = amr_geometry)
+    nH2 = read_optional_grid(filenH2, conversionn, LOS, grid_kind; hp_target = hp_target, amr_geometry = amr_geometry)
+    nHp = read_optional_grid(filenHp, conversionn, LOS, grid_kind; hp_target = hp_target, amr_geometry = amr_geometry)
 
-    B1, B2, BLOS = los_basis(read_required_grid(fileBx, conversionB; hp_target = hp_target),
-                             read_required_grid(fileBy, conversionB; hp_target = hp_target),
-                             read_required_grid(fileBz, conversionB; hp_target = hp_target), LOS)
+    B1, B2, BLOS = los_basis(read_required_grid(fileBx, conversionB; hp_target = hp_target, amr_geometry = amr_geometry),
+                             read_required_grid(fileBy, conversionB; hp_target = hp_target, amr_geometry = amr_geometry),
+                             read_required_grid(fileBz, conversionB; hp_target = hp_target, amr_geometry = amr_geometry), LOS)
 
-    V1, V2, VLOS = los_basis(read_required_grid(fileVx, conversionV; hp_target = hp_target),
-                             read_required_grid(fileVy, conversionV; hp_target = hp_target),
-                             read_required_grid(fileVz, conversionV; hp_target = hp_target), LOS)
+    V1, V2, VLOS = los_basis(read_required_grid(fileVx, conversionV; hp_target = hp_target, amr_geometry = amr_geometry),
+                             read_required_grid(fileVy, conversionV; hp_target = hp_target, amr_geometry = amr_geometry),
+                             read_required_grid(fileVz, conversionV; hp_target = hp_target, amr_geometry = amr_geometry), LOS)
 
-    if grid_kind == :image
+    if grid_kind in (:image, :amr)
         B1, B2, BLOS = permute_dims(B1, LOS), permute_dims(B2, LOS), permute_dims(BLOS, LOS)
         V1, V2, VLOS = permute_dims(V1, LOS), permute_dims(V2, LOS), permute_dims(VLOS, LOS)
         T, n = permute_dims(T, LOS), permute_dims(n, LOS)
@@ -425,20 +440,21 @@ function ReadSimulation(simu, LOS, conversionn, conversionT, conversionB; field_
     grid_kind = simulation_grid_kind(simu, field_sources)
     grid_kind == :healpix && _validate_healpix_los(LOS)
     hp_target = grid_kind == :healpix ? _healpix_target_from_source(fileBx) : nothing
+    amr_geometry = grid_kind == :amr ? load_amr_geometry(simu, amr_config(field_sources), source_path(fileBx)) : nothing
 
     required_files = [fileBx, fileBy, fileBz, filen, fileT]
     foreach(_validate_simulation_source, required_files)
 
-    T = read_required_grid(fileT, conversionT; hp_target = hp_target)
-    n = read_required_grid(filen, conversionn; hp_target = hp_target)
-    nH2 = read_optional_grid(filenH2, conversionn, LOS, grid_kind; hp_target = hp_target)
-    nHp = read_optional_grid(filenHp, conversionn, LOS, grid_kind; hp_target = hp_target)
+    T = read_required_grid(fileT, conversionT; hp_target = hp_target, amr_geometry = amr_geometry)
+    n = read_required_grid(filen, conversionn; hp_target = hp_target, amr_geometry = amr_geometry)
+    nH2 = read_optional_grid(filenH2, conversionn, LOS, grid_kind; hp_target = hp_target, amr_geometry = amr_geometry)
+    nHp = read_optional_grid(filenHp, conversionn, LOS, grid_kind; hp_target = hp_target, amr_geometry = amr_geometry)
 
-    B1, B2, BLOS = los_basis(read_required_grid(fileBx, conversionB; hp_target = hp_target),
-                             read_required_grid(fileBy, conversionB; hp_target = hp_target),
-                             read_required_grid(fileBz, conversionB; hp_target = hp_target), LOS)
+    B1, B2, BLOS = los_basis(read_required_grid(fileBx, conversionB; hp_target = hp_target, amr_geometry = amr_geometry),
+                             read_required_grid(fileBy, conversionB; hp_target = hp_target, amr_geometry = amr_geometry),
+                             read_required_grid(fileBz, conversionB; hp_target = hp_target, amr_geometry = amr_geometry), LOS)
 
-    if grid_kind == :image
+    if grid_kind in (:image, :amr)
         B1, B2, BLOS = permute_dims(B1, LOS), permute_dims(B2, LOS), permute_dims(BLOS, LOS)
         T, n = permute_dims(T, LOS), permute_dims(n, LOS)
     end

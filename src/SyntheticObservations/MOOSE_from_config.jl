@@ -151,12 +151,12 @@ end
 function build_faraday(cfg)
     faraday_cfg = get(cfg, "faraday", nothing)
     if faraday_cfg isa AbstractDict
-        enabled = normalize_yes_no_flag(get(faraday_cfg, "enabled", false), "faraday.enabled")
+        enabled = normalize_yes_no_flag(get(faraday_cfg, "enabled", true), "faraday.enabled")
         phimin = get(faraday_cfg, "phimin", -20.0)
         phimax = get(faraday_cfg, "phimax", 20.0)
         dphi = get(faraday_cfg, "dphi", 0.1)
     else
-        enabled = normalize_yes_no_flag(get(cfg, "FaradayRotation", "N"), "FaradayRotation")
+        enabled = normalize_yes_no_flag(get(cfg, "FaradayRotation", "Y"), "FaradayRotation")
         phimin = get(cfg, "phimin", -20.0)
         phimax = get(cfg, "phimax", 20.0)
         dphi = get(cfg, "dphi", 0.1)

@@ -28,6 +28,7 @@ include(joinpath("Utils", "AtomicWrite.jl"))
 
 include(joinpath("FileIO", "FITSUtils.jl"))
 include(joinpath("FileIO", "HDF5Utils.jl"))
+include(joinpath("FileIO", "AMRGrid.jl"))
 include(joinpath("FileIO", "Header.jl"))
 include(joinpath("FileIO", "ReadSimulation.jl"))
 include(joinpath("FileIO", "WriteDataOnDisk.jl"))

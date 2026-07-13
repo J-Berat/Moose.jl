@@ -14,7 +14,7 @@ reproducible FITS products for synchrotron and Faraday analysis.
 - Produce rotation-measure, spectral-index, polarization-fraction, and
   polarization-gradient maps.
 - Compute structure functions and polarization diagnostics.
-- Process cartesian FITS/HDF5 simulations and HEALPix FITS data.
+- Process cartesian FITS/HDF5, leaf-cell AMR HDF5, and HEALPix FITS data.
 - Process large datasets in tiles to reduce memory use.
 - Run interactively, from a JSON configuration, or through the Python wrapper.
 
@@ -70,6 +70,36 @@ MOOSE_from_config(demo.config_path; quiet=true)
 
 Results are written as FITS files alongside the selected simulation. Each run
 also records its configuration, provenance, and timing in `MOOSE_summary.log`.
+
+### AMR inputs
+
+MOOSE accepts AMR leaf cells stored in HDF5 and conservatively rasterizes each
+intensive field onto the regular output grid. Configure the physical fields as
+HDF5 datasets and add a shared `amr` geometry entry:
+
+```json
+"field_sources": {
+  "Bx":          {"path": "amr.h5", "dataset": "cells/Bx"},
+  "By":          {"path": "amr.h5", "dataset": "cells/By"},
+  "Bz":          {"path": "amr.h5", "dataset": "cells/Bz"},
+  "density":     {"path": "amr.h5", "dataset": "cells/density"},
+  "temperature": {"path": "amr.h5", "dataset": "cells/temperature"},
+  "amr": {
+    "file": "amr.h5",
+    "x": "cells/x", "y": "cells/y", "z": "cells/z",
+    "size": "cells/dx",
+    "bounds": [[0, 1], [0, 1], [0, 1]],
+    "shape": [256, 256, 256]
+  }
+}
+```
+
+`size` may contain one width per cell or three axis widths. Alternatively use
+`"level": "cells/level"`; a level `l` has width `domain_size / 2^l` (use
+`level_offset` when levels are numbered relative to another root). Inputs must
+contain leaf cells only. By default MOOSE rejects gaps and overlaps; set
+`"strict": false` only for intentionally partial domains. AMR currently uses
+the in-memory path and is therefore incompatible with `tile_size`.
 
 ## Citation
 

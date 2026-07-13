@@ -336,7 +336,7 @@ function _process_synchrotron_common(
     grid_kind = simulation_grid_kind(simu, field_sources)
     grid_kind == :healpix && _validate_healpix_los(LOS)
     hp_meta = grid_kind == :healpix ? healpix_simulation_metadata(simu, field_sources) : nothing
-    fits_metadata["GRID"] = grid_kind == :healpix ? "HEALPIX" : "IMAGE"
+    fits_metadata["GRID"] = grid_kind == :healpix ? "HEALPIX" : grid_kind == :amr ? "AMR" : "IMAGE"
 
     if float_type !== Float64
         hp_meta === nothing || throw_config_error(
@@ -346,6 +346,9 @@ function _process_synchrotron_common(
     end
 
     if tile_rows !== nothing
+        grid_kind == :amr && throw_config_error(
+            "`tile_size` is not supported with AMR inputs because rasterization must validate the complete leaf-cell coverage.";
+            code=:unsupported_grid_operation)
         if hp_meta !== nothing
             return _process_synchrotron_tiled_healpix(
                 simu, LOS, FaradayRotation, df, nuArray, PhiArray, BoxLength_pc,

@@ -490,6 +490,80 @@ end
     end
 end
 
+@testset "AMR leaf-cell HDF5 inputs" begin
+    mktempdir() do sim_dir
+        path = joinpath(sim_dir, "amr.h5")
+        centers = collect(Iterators.product((0.25, 0.75), (0.25, 0.75), (0.25, 0.75)))
+        x = [point[1] for point in centers]
+        y = [point[2] for point in centers]
+        z = [point[3] for point in centers]
+        base = Float64.(1:length(centers))
+        h5open(path, "w") do h5
+            h5["cells/x"] = x
+            h5["cells/y"] = y
+            h5["cells/z"] = z
+            h5["cells/level"] = fill(1, length(centers))
+            h5["cells/Bx"] = base
+            h5["cells/By"] = base .+ 10
+            h5["cells/Bz"] = base .+ 20
+            h5["cells/density"] = base .+ 30
+            h5["cells/temperature"] = base .+ 40
+        end
+
+        field_sources = Dict{String, Any}(
+            field => Dict("path" => "amr.h5", "dataset" => "cells/$(dataset)")
+            for (field, dataset) in (
+                "Bx" => "Bx", "By" => "By", "Bz" => "Bz",
+                "density" => "density", "temperature" => "temperature",
+            )
+        )
+        field_sources["amr"] = Dict(
+            "file" => "amr.h5",
+            "x" => "cells/x", "y" => "cells/y", "z" => "cells/z",
+            "level" => "cells/level",
+            "bounds" => [[0.0, 1.0], [0.0, 1.0], [0.0, 1.0]],
+            "shape" => [2, 2, 2],
+        )
+
+        @test Moose.simulation_grid_kind(sim_dir, field_sources) == :amr
+        B1, B2, BLOS, T, n, nH2, nHp = Moose.ReadSimulation(
+            sim_dir, "z", 2.0, 3.0, 4.0; field_sources = field_sources)
+        expected = reshape(base, 2, 2, 2)
+        @test B1 == 4.0 .* expected
+        @test B2 == 4.0 .* (expected .+ 10)
+        @test BLOS == 4.0 .* (expected .+ 20)
+        @test T == 3.0 .* (expected .+ 40)
+        @test n == 2.0 .* (expected .+ 30)
+        @test nH2 === nothing
+        @test nHp === nothing
+
+        # The same AMR volume can be observed along any cartesian LOS.
+        B1x, B2x, BLOSx, _, _, _, _ = Moose.ReadSimulation(
+            sim_dir, "x", 1.0, 1.0, 1.0; field_sources = field_sources)
+        @test B1x == permutedims(expected .+ 10, [2, 3, 1])
+        @test B2x == permutedims(expected .+ 20, [2, 3, 1])
+        @test BLOSx == permutedims(expected, [2, 3, 1])
+    end
+
+    # Strict coverage catches a non-leaf hierarchy (coarse and fine cells
+    # occupying the same volume) instead of silently double-counting it.
+    geometry = Moose.AMRGeometry(
+        [0.5 0.5 0.5; 0.25 0.25 0.25],
+        [1.0 1.0 1.0; 0.5 0.5 0.5],
+        ((0.0, 1.0), (0.0, 1.0), (0.0, 1.0)),
+        (2, 2, 2), true, 1e-8,
+    )
+    @test_throws Moose.MooseError Moose.rasterize_amr_field([1.0, 2.0], geometry)
+
+    coarse = Moose.AMRGeometry(
+        reshape([0.5, 0.5, 0.5], 1, 3),
+        reshape([1.0, 1.0, 1.0], 1, 3),
+        ((0.0, 1.0), (0.0, 1.0), (0.0, 1.0)),
+        (4, 3, 2), true, 1e-8,
+    )
+    @test Moose.rasterize_amr_field([7.5], coarse) ≈ fill(7.5, 4, 3, 2)
+end
+
 @testset "Regression — Tnu3D cached path preserves column values" begin
     mktempdir() do dir
         emissivity_path = joinpath(dir, "emissivity.csv")
@@ -695,6 +769,9 @@ end
 end
 
 @testset "Config validation" begin
+    @test first(Moose.MooseFromConfig.build_faraday(Dict{String,Any}())) == "Y"
+    @test first(Moose.MooseFromConfig.build_faraday(Dict("faraday" => Dict{String,Any}()))) == "Y"
+
     mktempdir() do base_dir
         sim_dir = joinpath(base_dir, "simu1")
         mkdir(sim_dir)

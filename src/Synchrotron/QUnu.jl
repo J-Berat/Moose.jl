@@ -120,6 +120,24 @@ end
     end
 end
 
+@inline function _linear_interp_at_index(xgrid::Vector{Float64}, ygrid::AbstractMatrix{Float64},
+                                         col::Int, x::Float64, idx::Int)
+    @inbounds begin
+        x1, x2 = xgrid[idx], xgrid[idx + 1]
+        y1, y2 = ygrid[idx, col], ygrid[idx + 1, col]
+        return y1 + (x - x1) * (y2 - y1) / (x2 - x1)
+    end
+end
+
+function _emissivity_brackets!(indices, xgrid::Vector{Float64}, values)
+    last = length(xgrid) - 1
+    @inbounds for k in eachindex(indices, values)
+        x = Float64(values[k])
+        indices[k] = x <= xgrid[1] ? 1 : x >= xgrid[end] ? last : searchsortedlast(xgrid, x)
+    end
+    return indices
+end
+
 function emissivity_at_frequency!(buffer, B::Vector{Float64}, eps_interp::Spline2D, Bperp::AbstractArray, nui;
     eps_cache_col=nothing, eps_line_buffer=nothing)
     eps_i = eps_cache_col
@@ -135,9 +153,12 @@ function emissivity_at_frequency!(buffer, B::Vector{Float64}, eps_interp::Spline
     return buffer
 end
 
-function _QUnu!(Qnu, Unu, Bperp, psi_src, RM, nuArray, PixelLength_cm, interpolator; emissivity_cache=nothing)
+function _QUnu!(Qnu, Unu, Bperp, psi_src, RM, nuArray, PixelLength_cm, interpolator;
+                 emissivity_cache=nothing, interp_indices=nothing)
     Nfreq = length(nuArray)
     eps_line_buffer = emissivity_cache === nothing ? similar(interpolator.B, Float64) : nothing
+    indices = interp_indices === nothing ? similar(Bperp, Int) : interp_indices
+    emissivity_cache === nothing || _emissivity_brackets!(indices, interpolator.B, Bperp)
 
     for i in 1:Nfreq
         nui = nuArray[i]
@@ -154,7 +175,7 @@ function _QUnu!(Qnu, Unu, Bperp, psi_src, RM, nuArray, PixelLength_cm, interpola
             arg = 2.0 * (psi_src[idx] + RM[idx] * faraday_factor)
             eps_val = emissivity_cache === nothing ?
                 linear_interp_extrapolated(interpolator.B, eps_line_buffer, Float64(Bperp[idx])) :
-                linear_interp_extrapolated(interpolator.B, emissivity_cache, i, Float64(Bperp[idx]))
+                _linear_interp_at_index(interpolator.B, emissivity_cache, i, Float64(Bperp[idx]), indices[idx])
             sum_u += eps_val * sin(arg)
             sum_q += eps_val * cos(arg)
         end
@@ -216,6 +237,7 @@ function QUnu3D(Bperpcube, psi_src, RM, nuArray, df, PixelLength_cm; log_progres
     Unu = zeros(T, nx, ny, Nfreq)
     interpolator = EmissivityInterpolator(df)
     emissivity_cache = build_emissivity_frequency_cache(interpolator, nuArray)
+    interp_indices = Matrix{Int}(undef, size(Bperpcube, 3), Threads.maxthreadid())
     total_pixels = nx * ny
     progress_counter = Threads.Atomic{Int}(0)
     progress_step = max(floor(Int, total_pixels / 100), 1)
@@ -228,7 +250,9 @@ function QUnu3D(Bperpcube, psi_src, RM, nuArray, df, PixelLength_cm; log_progres
         @views psi_src_vec = psi_src[i, j, :]
         @views qdest = Qnu[i, j, :]
         @views udest = Unu[i, j, :]
-        _QUnu!(qdest, udest, Bperp_vec, psi_src_vec, RM_vec, nuArray, PixelLength_cm, interpolator; emissivity_cache=emissivity_cache)
+        @views indices = interp_indices[:, Threads.threadid()]
+        _QUnu!(qdest, udest, Bperp_vec, psi_src_vec, RM_vec, nuArray, PixelLength_cm,
+            interpolator; emissivity_cache=emissivity_cache, interp_indices=indices)
 
         if log_progress
             done = Threads.atomic_add!(progress_counter, 1) + 1
@@ -277,9 +301,22 @@ PixelLength_cm = 1.0
 # Function call
 Qnu, Unu = QUnuNoFaraday(Bperp, psi_src, nuArray, df, PixelLength_cm)
 """
-function _QUnuNoFaraday!(Qnu, Unu, Bperp, psi_src, nuArray, PixelLength_cm, interpolator; emissivity_cache=nothing)
+function _QUnuNoFaraday!(Qnu, Unu, Bperp, psi_src, nuArray, PixelLength_cm, interpolator;
+                          emissivity_cache=nothing, interp_indices=nothing,
+                          sin_angles=nothing, cos_angles=nothing)
     Nfreq = length(nuArray)
     eps_line_buffer = emissivity_cache === nothing ? similar(interpolator.B, Float64) : nothing
+    indices = interp_indices === nothing ? similar(Bperp, Int) : interp_indices
+    sins = sin_angles === nothing ? similar(Bperp, Float64) : sin_angles
+    coss = cos_angles === nothing ? similar(Bperp, Float64) : cos_angles
+    if emissivity_cache !== nothing
+        _emissivity_brackets!(indices, interpolator.B, Bperp)
+    end
+    @inbounds for idx in eachindex(psi_src, sins, coss)
+        arg = 2.0 * psi_src[idx]
+        sins[idx] = sin(arg)
+        coss[idx] = cos(arg)
+    end
 
     for i in 1:Nfreq
         nui = nuArray[i]
@@ -292,12 +329,11 @@ function _QUnuNoFaraday!(Qnu, Unu, Bperp, psi_src, nuArray, PixelLength_cm, inte
         sum_u = 0.0
         sum_q = 0.0
         @inbounds for idx in eachindex(Bperp, psi_src)
-            arg = 2.0 * psi_src[idx]
             eps_val = emissivity_cache === nothing ?
                 linear_interp_extrapolated(interpolator.B, eps_line_buffer, Float64(Bperp[idx])) :
-                linear_interp_extrapolated(interpolator.B, emissivity_cache, i, Float64(Bperp[idx]))
-            sum_u += eps_val * sin(arg)
-            sum_q += eps_val * cos(arg)
+                _linear_interp_at_index(interpolator.B, emissivity_cache, i, Float64(Bperp[idx]), indices[idx])
+            sum_u += eps_val * sins[idx]
+            sum_q += eps_val * coss[idx]
         end
 
         Unu[i] = BrightnessTemperature(nui, sum_u * PixelLength_cm)
@@ -356,6 +392,11 @@ function QUnuNoFaraday3D(Bperpcube, psi_src, nuArray, df, PixelLength_cm; log_pr
     Unu = zeros(T, size(Bperpcube,1), size(Bperpcube,2), Nfreq)
     interpolator = EmissivityInterpolator(df)
     emissivity_cache = build_emissivity_frequency_cache(interpolator, nuArray)
+    depth = size(Bperpcube, 3)
+    nthreads = Threads.maxthreadid()
+    interp_indices = Matrix{Int}(undef, depth, nthreads)
+    sin_angles = Matrix{Float64}(undef, depth, nthreads)
+    cos_angles = Matrix{Float64}(undef, depth, nthreads)
     total_pixels = size(Bperpcube, 1) * size(Bperpcube, 2)
     progress_counter = Threads.Atomic{Int}(0)
     progress_step = max(floor(Int, total_pixels / 100), 1)
@@ -367,7 +408,11 @@ function QUnuNoFaraday3D(Bperpcube, psi_src, nuArray, df, PixelLength_cm; log_pr
         @views psi_src_vec = psi_src[i,j,:]
         @views qdest = Qnu[i, j, :]
         @views udest = Unu[i, j, :]
-        _QUnuNoFaraday!(qdest, udest, Bperp_vec, psi_src_vec, nuArray, PixelLength_cm, interpolator; emissivity_cache=emissivity_cache)
+        tid = Threads.threadid()
+        _QUnuNoFaraday!(qdest, udest, Bperp_vec, psi_src_vec, nuArray, PixelLength_cm,
+            interpolator; emissivity_cache=emissivity_cache,
+            interp_indices=view(interp_indices, :, tid),
+            sin_angles=view(sin_angles, :, tid), cos_angles=view(cos_angles, :, tid))
 
         if log_progress
             done = Threads.atomic_add!(progress_counter, 1) + 1
