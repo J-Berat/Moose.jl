@@ -28,7 +28,11 @@ println("Second moment: ", m2)
 """
 
 function moments(y; x=1:length(y), threshold=0.0)
-    mask = y .> threshold
+    length(x) == length(y) ||
+        throw(ArgumentError("x and y must have the same length (got $(length(x)) and $(length(y)))."))
+    isfinite(threshold) || throw(ArgumentError("threshold must be finite (got $threshold)."))
+
+    mask = isfinite.(y) .& isfinite.(x) .& (y .> threshold)
     y_masked = y[mask]
     x_masked = x[mask]
 
@@ -37,9 +41,11 @@ function moments(y; x=1:length(y), threshold=0.0)
     end
 
     m0 = sum(y_masked)
+    isfinite(m0) && !iszero(m0) || return NaN, NaN, NaN
     m1 = sum(y_masked .* x_masked) / m0
     m2_2 = sum(@. y_masked * (x_masked - m1)^2) / m0
-    m2 = m2_2 >= 0 ? sqrt(m2_2) : NaN
+    tolerance = 64 * eps(Float64) * max(abs(m1)^2, 1.0)
+    m2 = m2_2 >= -tolerance ? sqrt(max(m2_2, 0.0)) : NaN
 
     return m0, m1, m2
 end

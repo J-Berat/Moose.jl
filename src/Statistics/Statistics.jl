@@ -19,7 +19,7 @@ Calculate various statistical metrics for the given data.
   - `kurtosis_value::Float64`: The kurtosis of the data.
 
 # Description
-This function calculates various statistical metrics for the provided data array. It computes the maximum and minimum values along with their indices, the mean, median, standard deviation (sigma), skewness, and kurtosis of the data.
+This function calculates various statistical metrics for the provided data array. It computes the maximum and minimum values along with their indices, the mean, median, standard deviation (sigma), skewness, and kurtosis of the data. Non-finite values are ignored and extrema indices refer to the original array. An `ArgumentError` is thrown when no finite value remains.
 
 # Example
 ```julia
@@ -37,15 +37,21 @@ println("Skewness: ", skew_val)
 println("Kurtosis: ", kurt_val)
 """
 function CalculateStatistics(data::AbstractArray)
-    
-    maximum_value, index_max = findmax(data)
-    minimum_value, index_min = findmin(data)
-    
-    mean_value = mean(data)
-    median_value = median(data)
-    sigma_value = std(data)
-    skewness_value = skewness(data)
-    kurtosis_value = kurtosis(data)
+    finite_indices = findall(isfinite, data)
+    isempty(finite_indices) &&
+        throw(ArgumentError("CalculateStatistics needs at least one finite value."))
+    finite_data = data[finite_indices]
+
+    maximum_value, local_index_max = findmax(finite_data)
+    minimum_value, local_index_min = findmin(finite_data)
+    index_max = finite_indices[local_index_max]
+    index_min = finite_indices[local_index_min]
+
+    mean_value = mean(finite_data)
+    median_value = median(finite_data)
+    sigma_value = std(finite_data)
+    skewness_value = skewness(finite_data)
+    kurtosis_value = kurtosis(finite_data)
     
     return maximum_value, index_max, minimum_value, index_min, mean_value, median_value, sigma_value, skewness_value, kurtosis_value
 end

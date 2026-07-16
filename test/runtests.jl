@@ -54,6 +54,10 @@ end
 
     z2 = [5.0, 6.0]
     @test isapprox(Moose.RMS(x2, y2, z2), sqrt(0.75))
+
+    @test Moose.RMS([1.0, NaN, 3.0]) == 1.0
+    @test Moose.RMS([1.0, NaN, 3.0], [2.0, 50.0, 4.0]) == sqrt(2.0)
+    @test isnan(Moose.RMS([NaN, Inf]))
 end
 
 @testset "Pnu" begin
@@ -154,6 +158,12 @@ end
 
     empty_moments = Moose.moments([0.0, 0.0]; x = [1.0, 2.0], threshold = 0.5)
     @test all(isnan, empty_moments)
+
+    finite_moments = Moose.moments([1.0, NaN, 3.0]; x = [1.0, 2.0, 3.0])
+    @test finite_moments[1] == 4.0
+    @test finite_moments[2] == 2.5
+    @test isfinite(finite_moments[3])
+    @test_throws ArgumentError Moose.moments([1.0, 2.0]; x = [1.0])
 end
 
 @testset "Spectral index map" begin
@@ -227,6 +237,7 @@ end
     k, psd1d = Moose.radial_psd(delta_field; detrend_mean = false, normalize = true, nbins = 1)
     @test length(k) == 1
     @test isapprox(psd1d[1], 0.25; atol = 1e-12)
+    @test_throws ArgumentError Moose.power_spectrum_2d([1.0 NaN; 2.0 3.0])
 end
 
 @testset "Interferometric filtering" begin
@@ -268,6 +279,31 @@ end
     @test isapprox(sigmaQ, 0.5; rtol = 0.15)
     @test isapprox(sigmaU, 0.5; rtol = 0.15)
     @test_throws ErrorException Moose._add_noise!(Q, U, -1.0, rng)
+
+    # Masked pixels neither poison the channel-wide noise estimate nor get
+    # spuriously unmasked by the random draw.
+    Qmasked = fill(3.0, 32, 32, 1)
+    Umasked = fill(4.0, 32, 32, 1)
+    Qmasked[1, 1, 1] = NaN
+    Umasked[1, 1, 1] = NaN
+    Moose._add_noise!(Qmasked, Umasked, snr, Moose.Random.MersenneTwister(1234))
+    @test isnan(Qmasked[1, 1, 1]) && isnan(Umasked[1, 1, 1])
+    @test all(isfinite, @view Qmasked[2:end, :, :])
+    @test all(isfinite, @view Umasked[2:end, :, :])
+end
+
+@testset "NaN-aware descriptive statistics" begin
+    data = [1.0 NaN; 4.0 -Inf]
+    stats = Moose.CalculateStatistics(data)
+    @test stats[1] == 4.0
+    @test stats[2] == CartesianIndex(2, 1)
+    @test stats[3] == 1.0
+    @test stats[4] == CartesianIndex(1, 1)
+    @test stats[5] == 2.5
+    @test_throws ArgumentError Moose.CalculateStatistics(fill(NaN, 2, 2))
+
+    @test Moose.EffectiveWidth([1.0, NaN, 2.0], [0.0, 1.0, 2.0]) == 1.5
+    @test isnan(Moose.EffectiveWidth(fill(NaN, 3), 1:3))
 end
 
 @testset "Regression — band-pass filter selects requested scales (BUG-3)" begin
@@ -503,6 +539,7 @@ end
             h5["cells/y"] = y
             h5["cells/z"] = z
             h5["cells/level"] = fill(1, length(centers))
+            h5["cells/dx"] = fill(0.5, length(centers))
             h5["cells/Bx"] = base
             h5["cells/By"] = base .+ 10
             h5["cells/Bz"] = base .+ 20
@@ -543,6 +580,75 @@ end
         @test B1x == permutedims(expected .+ 10, [2, 3, 1])
         @test B2x == permutedims(expected .+ 20, [2, 3, 1])
         @test BLOSx == permutedims(expected, [2, 3, 1])
+
+        # Alternate geometry file, explicit sizes, level offsets, and textual
+        # booleans all use the same exact cell-to-voxel assignment.
+        geometry_path = joinpath(sim_dir, "geometry.h5")
+        h5open(geometry_path, "w") do h5
+            h5["cells/x"] = x
+            h5["cells/y"] = y
+            h5["cells/z"] = z
+            h5["cells/dx"] = fill(0.5, length(centers))
+        end
+        size_sources = deepcopy(field_sources)
+        size_sources["amr"] = Dict(
+            "file" => "geometry.h5",
+            "x" => "cells/x", "y" => "cells/y", "z" => "cells/z",
+            "size" => "cells/dx", "shape" => [2, 2, 2], "strict" => "false",
+        )
+        size_plan = Moose.load_amr_raster_plan(sim_dir, size_sources["amr"], path)
+        @test !size_plan.geometry.strict
+        @test Moose.rasterize_amr_field(base, size_plan) == expected
+
+        offset_sources = deepcopy(field_sources)
+        offset_sources["amr"]["level_offset"] = 1
+        h5open(path, "r+") do h5
+            h5["cells/level"][:] = fill(2, length(centers))
+        end
+        offset_plan = Moose.load_amr_raster_plan(sim_dir, offset_sources["amr"], path)
+        @test Moose.rasterize_amr_field(base, offset_plan) == expected
+
+        # Structured AMR errors survive the generic grid-reader boundary.
+        misaligned_sources = deepcopy(field_sources)
+        misaligned_sources["amr"]["level_offset"] = 1
+        misaligned_sources["amr"]["shape"] = [3, 3, 3]
+        err = try
+            Moose.ReadSimulation(sim_dir, "z", 1.0, 1.0, 1.0; field_sources = misaligned_sources)
+            nothing
+        catch caught
+            caught
+        end
+        @test err isa Moose.MooseError
+        @test err.code == :amr_grid_misaligned
+
+        # Full AMR pipeline through science-map FITS output and preflight.
+        interpolation_path = joinpath(sim_dir, "emissivity.csv")
+        write_test_emissivity(interpolation_path)
+        config_path = joinpath(sim_dir, "amr_config.json")
+        cfg = Dict(
+            "base_dir" => sim_dir,
+            "simulations" => [sim_dir],
+            "chosen_LOS" => ["z"],
+            "field_sources" => offset_sources,
+            "interpolation_file_path" => interpolation_path,
+            "faraday" => Dict("enabled" => false, "phimin" => -10.0, "phimax" => 10.0, "dphi" => 1.0),
+            "ne_option" => "2", "IonizationFraction" => 0.1,
+            "freq" => Dict("start" => 100.0, "end" => 101.0, "step" => 1.0),
+            "BoxLength_pc" => 2.0, "BoxLength_pix" => 2,
+            "log_progress" => false,
+        )
+        write(config_path, JSON.json(cfg))
+        run_cfg, _ = build_config(cfg, config_path)
+        plan_io = IOBuffer()
+        preflight = Moose.preflight_plan(run_cfg; io=plan_io)
+        @test only(preflight.entries).grid == :amr
+        @test occursin("AMR geometry/lookup", String(take!(plan_io)))
+        Moose.MOOSE_from_config(config_path; quiet=true)
+        q_path = joinpath(sim_dir, "z", "Synchrotron", "noFaraday", "Qnu.fits")
+        @test isfile(q_path)
+        @test FITS(q_path) do fits
+            read_header(fits[1])["GRID"] == "AMR"
+        end
     end
 
     # Strict coverage catches a non-leaf hierarchy (coarse and fine cells
@@ -562,6 +668,40 @@ end
         (4, 3, 2), true, 1e-8,
     )
     @test Moose.rasterize_amr_field([7.5], coarse) ≈ fill(7.5, 4, 3, 2)
+
+    # A genuine mixed leaf hierarchy: seven level-1 octants and eight level-2
+    # leaves replacing the upper corner.
+    coarse_centers = [collect(point) for point in Iterators.product((0.25, 0.75), (0.25, 0.75), (0.25, 0.75)) if point != (0.75, 0.75, 0.75)]
+    fine_centers = [collect(point) for point in Iterators.product((0.625, 0.875), (0.625, 0.875), (0.625, 0.875))]
+    mixed_centers = permutedims(hcat(coarse_centers..., fine_centers...))
+    mixed_widths = vcat(fill(0.5, length(coarse_centers), 3), fill(0.25, length(fine_centers), 3))
+    mixed = Moose.AMRGeometry(mixed_centers, mixed_widths,
+        ((0.0, 1.0), (0.0, 1.0), (0.0, 1.0)), (4, 4, 4), true, 1e-8)
+    mixed_plan = Moose.build_amr_raster_plan(mixed)
+    @test all(>(0), mixed_plan.cell_index)
+    mixed_map = Moose.rasterize_amr_field(collect(1.0:15.0), mixed_plan)
+    @test mixed_map[1:2, 1:2, 1:2] == fill(1.0, 2, 2, 2)
+    @test sort(unique(vec(mixed_map[3:4, 3:4, 3:4]))) == collect(8.0:15.0)
+
+    partial = Moose.AMRGeometry(
+        reshape([0.25, 0.5, 0.5], 1, 3), reshape([0.5, 1.0, 1.0], 1, 3),
+        ((0.0, 1.0), (0.0, 1.0), (0.0, 1.0)), (2, 2, 2), false, 1e-8)
+    partial_map = Moose.rasterize_amr_field([3.0], partial)
+    @test all(==(3.0), partial_map[1, :, :])
+    @test all(isnan, partial_map[2, :, :])
+
+    fine_grid = Moose.AMRGeometry(
+        permutedims(hcat(([point...] for point in Iterators.product((0.125, 0.375, 0.625, 0.875), (0.125, 0.375, 0.625, 0.875), (0.125, 0.375, 0.625, 0.875)))...)),
+        fill(0.25, 64, 3), ((0.0, 1.0), (0.0, 1.0), (0.0, 1.0)),
+        (2, 2, 2), true, 1e-8)
+    err = try
+        Moose.build_amr_raster_plan(fine_grid)
+        nothing
+    catch caught
+        caught
+    end
+    @test err isa Moose.MooseError
+    @test err.code == :amr_resolution_too_coarse
 end
 
 @testset "Regression — Tnu3D cached path preserves column values" begin

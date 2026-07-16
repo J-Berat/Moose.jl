@@ -2,3 +2,5 @@
 .ipynb_checkpoints/
 .Rhistory
 .fuse_hidden*
+__pycache__/
+*.py[cod]

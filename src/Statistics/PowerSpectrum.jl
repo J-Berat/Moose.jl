@@ -27,6 +27,12 @@ Compute the 2D power spectral density (PSD) of a 2D field.
 function power_spectrum_2d(field::AbstractMatrix; pixel_size::Real = 1.0, center::Bool = true,
     detrend_mean::Bool = true, normalize::Bool = true, log_progress::Bool = false)
 
+    isfinite(pixel_size) && pixel_size > 0 ||
+        throw(ArgumentError("pixel_size must be positive and finite (got $pixel_size)."))
+    isempty(field) && throw(ArgumentError("field must not be empty."))
+    all(isfinite, field) || throw(ArgumentError(
+        "power_spectrum_2d requires a fully finite rectangular field; masked NaN/Inf pixels cannot be passed to an FFT without an explicit inpainting or windowing strategy."))
+
     log_progress && @info "Computing 2D power spectrum" size = size(field) pixel_size = pixel_size detrend_mean = detrend_mean normalize = normalize
 
     data = detrend_mean ? field .- mean(field) : field

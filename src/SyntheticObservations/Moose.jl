@@ -772,12 +772,13 @@ function preflight_plan(cfg::RunConfig; io::IO=stdout)
         grid == :amr && cfg.tile_size !== nothing && throw_config_error(
             "`tile_size` is not supported with AMR inputs because rasterization must validate the complete leaf-cell coverage.";
             code=:unsupported_grid_operation)
-        amr_geometry = if grid == :amr
+        amr_plan = if grid == :amr
             reference = simulation_field_source(simu, "Bx", cfg.field_sources)
-            load_amr_geometry(simu, amr_config(cfg.field_sources), source_path(reference))
+            load_amr_raster_plan(simu, amr_config(cfg.field_sources), source_path(reference))
         else
             nothing
         end
+        amr_geometry = amr_plan === nothing ? nothing : amr_plan.geometry
         shapes = Dict{String, Tuple}()
         for field in ("Bx", "By", "Bz", "density", "temperature")
             source = simulation_field_source(simu, field, cfg.field_sources)
@@ -824,12 +825,20 @@ function preflight_plan(cfg::RunConfig; io::IO=stdout)
             working_rows = cfg.tile_size === nothing ? processed[2] : min(cfg.tile_size, processed[2])
             working_sky = processed[1] * working_rows
             ram_elements = 7 * processed[1] * working_rows * processed[3] + (need_qu ? 2 * working_sky * nfreq : 0) + (need_t ? working_sky * nfreq : 0) + (want("fdf") ? 3 * working_sky * nphi : 0)
-            ram = ram_elements * bytes_per
-            work = (need_qu || need_t ? nsky * processed[3] * nfreq : 0) + (want("fdf") ? nsky * nfreq * nphi : 0)
+            amr_ram = if grid == :amr
+                ncell = size(amr_geometry.centers, 1)
+                6 * ncell * sizeof(Float64) + nvox * sizeof(Int) + ncell * bytes_per
+            else
+                0
+            end
+            ram = ram_elements * bytes_per + amr_ram
+            raster_work = grid == :amr ? 5 * nvox : 0
+            work = (need_qu || need_t ? nsky * processed[3] * nfreq : 0) + (want("fdf") ? nsky * nfreq * nphi : 0) + raster_work
             total_disk += disk
             total_voxel_channels += work
             push!(entries, (; simulation=simu, los, grid, shape=processed, ram_bytes=ram, disk_bytes=disk, workload=work))
-            println(io, "- $(basename(simu)) LOS=$(los) grid=$(grid) shape=$(processed): peak RAM ≈ $(_human_bytes(ram)), FITS data ≈ $(_human_bytes(disk)), workload=$(work) cell-channel ops")
+            amr_note = grid == :amr ? ", including AMR geometry/lookup ≈ $(_human_bytes(amr_ram))" : ""
+            println(io, "- $(basename(simu)) LOS=$(los) grid=$(grid) shape=$(processed): peak RAM ≈ $(_human_bytes(ram))$(amr_note), FITS data ≈ $(_human_bytes(disk)), workload=$(work) cell-channel ops")
         end
     end
     println(io, "Total estimated FITS data: $(_human_bytes(total_disk))")

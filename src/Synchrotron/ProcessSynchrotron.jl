@@ -218,20 +218,38 @@ the same standard deviation σ = P_rms / SNR_nu is applied to Q and U
 (σ in the same unit as the cubes, i.e. Kelvin).
 """
 function _add_noise!(Qnu, Unu, SNR_nu, rng)
-    SNR_nu > 0 || error("SNR_nu must be > 0, got $SNR_nu")
+    isfinite(SNR_nu) && SNR_nu > 0 || error("SNR_nu must be finite and > 0, got $SNR_nu")
     noiseQ = similar(Qnu[:, :, 1])
     noiseU = similar(Unu[:, :, 1])
 
     @views for i in axes(Qnu, 3)
         Qch = Qnu[:, :, i]
         Uch = Unu[:, :, i]
-        P_rms = sqrt(mean(abs2, Qch) + mean(abs2, Uch))
+        sum_p2 = 0.0
+        nfinite = 0
+        @inbounds for idx in eachindex(Qch, Uch)
+            q = Qch[idx]
+            u = Uch[idx]
+            if isfinite(q) && isfinite(u)
+                sum_p2 += abs2(q) + abs2(u)
+                nfinite += 1
+            end
+        end
+        # An entirely masked channel contains no signal from which a noise
+        # level can be estimated. Leave it masked instead of contaminating
+        # the other channels (or attempting randn! with a NaN scale).
+        nfinite == 0 && continue
+        P_rms = sqrt(sum_p2 / nfinite)
         sigma = P_rms / SNR_nu
-        sigma > 0 || continue
+        isfinite(sigma) && sigma > 0 || continue
         randn!(rng, noiseQ)
         randn!(rng, noiseU)
-        Qch .+= sigma .* noiseQ
-        Uch .+= sigma .* noiseU
+        @inbounds for idx in eachindex(Qch, Uch, noiseQ, noiseU)
+            if isfinite(Qch[idx]) && isfinite(Uch[idx])
+                Qch[idx] += sigma * noiseQ[idx]
+                Uch[idx] += sigma * noiseU[idx]
+            end
+        end
     end
 
     return nothing
@@ -510,7 +528,7 @@ function _process_synchrotron_common(
     if want("stokes") || want("diagnostics")
         _stage("Computing polarized intensity")
         Pnucube = Pnu(Qnu, Unu)
-        Pnumax = maxCube(Pnucube)
+        Pnumax = _max_finite_cube(Pnucube)
         if want("stokes")
             polfrac = PolarizationFraction(Pnucube, T_nu)
             polfracmax = _max_finite_cube(polfrac)

@@ -16,6 +16,18 @@ struct AMRGeometry
     tolerance::Float64
 end
 
+"""Precomputed, exact assignment of every regular output voxel to one AMR leaf cell."""
+struct AMRRasterPlan
+    geometry::AMRGeometry
+    cell_index::Array{Int, 3} # zero marks an uncovered voxel when strict=false
+end
+
+const _AMR_PLAN_CACHE = Dict{Any, AMRRasterPlan}()
+const _AMR_PLAN_CACHE_LOCK = ReentrantLock()
+# One plan is enough to reuse geometry across the sequential x/y/z workflow,
+# while keeping memory bounded for very large target grids.
+const _AMR_PLAN_CACHE_LIMIT = 1
+
 function _amr_get(config::AbstractDict, key::AbstractString, default=nothing)
     for candidate in (key, Symbol(key))
         try
@@ -85,6 +97,14 @@ function _amr_geometry_file(simu::AbstractString, config::AbstractDict, fallback
     return isabspath(path) ? path : joinpath(simu, path)
 end
 
+function _amr_bool(value, label::AbstractString)
+    value isa Bool && return value
+    normalized = lowercase(strip(String(value)))
+    normalized in ("true", "yes", "y", "1") && return true
+    normalized in ("false", "no", "n", "0") && return false
+    throw_config_error("`$(label)` must be a boolean; got $(value)."; code=:invalid_field_sources)
+end
+
 function _read_amr_vector(file::AbstractString, dataset, label::AbstractString)
     dataset === nothing && throw_config_error("`field_sources.amr.$(label)` must name an HDF5 dataset."; code=:invalid_field_sources)
     data = vec(read_HDF5_file(file; dataset=String(dataset), expected_ndims=nothing))
@@ -143,69 +163,124 @@ function load_amr_geometry(simu::AbstractString, config::AbstractDict, fallback_
     centers = hcat(x, y, z)
     tolerance = Float64(_amr_get(config, "tolerance", 1e-8))
     isfinite(tolerance) && tolerance >= 0 || throw_config_error("AMR tolerance must be finite and non-negative."; code=:invalid_field_sources)
-    strict = Bool(_amr_get(config, "strict", true))
+    strict = _amr_bool(_amr_get(config, "strict", true), "field_sources.amr.strict")
     return AMRGeometry(centers, widths, bounds, _amr_shape(config), strict, tolerance)
 end
 
-"""Rasterize an intensive leaf-cell field by exact volume-overlap averaging."""
-function rasterize_amr_field(values::AbstractArray, geometry::AMRGeometry; label::AbstractString="field")
+function build_amr_raster_plan(geometry::AMRGeometry)
+    shape = geometry.shape
+    voxel_width = ntuple(axis -> (geometry.bounds[axis][2] - geometry.bounds[axis][1]) / shape[axis], 3)
+    cell_index = zeros(Int, shape)
+
+    for cell in axes(geometry.centers, 1)
+        ranges = ntuple(3) do axis
+            bound_lo, bound_hi = geometry.bounds[axis]
+            cell_lo = geometry.centers[cell, axis] - geometry.widths[cell, axis] / 2
+            cell_hi = geometry.centers[cell, axis] + geometry.widths[cell, axis] / 2
+            scale = voxel_width[axis]
+            # Alignment is checked in voxel units. Account for floating-point
+            # coordinate noise without letting a domain-relative tolerance
+            # grow to a sizeable fraction of a voxel on extremely fine grids.
+            atol = max(geometry.tolerance, 64 * eps(Float64) * shape[axis])
+            qlo = (cell_lo - bound_lo) / scale
+            qhi = (cell_hi - bound_lo) / scale
+
+            cell_lo >= bound_lo - geometry.tolerance * (bound_hi - bound_lo) &&
+                cell_hi <= bound_hi + geometry.tolerance * (bound_hi - bound_lo) ||
+                throw_config_error(
+                    "AMR cell $(cell) extends outside configured bounds on axis $(axis).";
+                    code=:cube_shape_mismatch)
+            geometry.widths[cell, axis] + geometry.tolerance * scale >= scale ||
+                throw_config_error(
+                    "The AMR target grid is coarser than cell $(cell) on axis $(axis). " *
+                    "Increase `field_sources.amr.shape` to at least the finest AMR resolution.";
+                    code=:amr_resolution_too_coarse)
+            isapprox(qlo, round(qlo); atol=atol, rtol=0) &&
+                isapprox(qhi, round(qhi); atol=atol, rtol=0) ||
+                throw_config_error(
+                    "AMR cell $(cell) is not aligned with the target grid on axis $(axis). " *
+                    "Choose a shape matching the finest AMR level to avoid averaging physical states before emissivity calculation.";
+                    code=:amr_grid_misaligned)
+
+            first_index = round(Int, qlo) + 1
+            last_index = round(Int, qhi)
+            first_index <= last_index || throw_config_error(
+                "The AMR target grid is coarser than cell $(cell) on axis $(axis). " *
+                "Increase `field_sources.amr.shape` to at least the finest AMR resolution.";
+                code=:amr_resolution_too_coarse)
+            clamp(first_index, 1, shape[axis]):clamp(last_index, 1, shape[axis])
+        end
+
+        for k in ranges[3], j in ranges[2], i in ranges[1]
+            previous = cell_index[i, j, k]
+            previous == 0 || throw_config_error(
+                "AMR leaf cells $(previous) and $(cell) overlap in output voxel $((i, j, k)); provide leaf cells only.";
+                code=:cube_shape_mismatch)
+            cell_index[i, j, k] = cell
+        end
+    end
+
+    if geometry.strict
+        uncovered = findfirst(==(0), cell_index)
+        uncovered === nothing || throw_config_error(
+            "AMR leaf cells do not cover output voxel $(Tuple(uncovered)) completely.";
+            code=:cube_shape_mismatch)
+    end
+    return AMRRasterPlan(geometry, cell_index)
+end
+
+function _amr_plan_cache_key(simu::AbstractString, config::AbstractDict, fallback_file::AbstractString)
+    file = abspath(_amr_geometry_file(simu, config, fallback_file))
+    validation_error = ensure_readable_file(file; expected_exts=collect(HDF5_EXTS))
+    validation_error === nothing || throw_config_error(validation_error; code=:invalid_field_sources)
+    info = stat(file)
+    geometry_keys = ("x", "y", "z", "size", "level", "level_offset", "strict", "tolerance")
+    settings = Tuple(string(_amr_get(config, key, nothing)) for key in geometry_keys)
+    return (file, info.size, info.mtime, _amr_shape(config), _amr_bounds(config), settings)
+end
+
+"""Load and cache the geometry-to-voxel assignment for reuse by every field and LOS."""
+function load_amr_raster_plan(simu::AbstractString, config::AbstractDict, fallback_file::AbstractString)
+    key = _amr_plan_cache_key(simu, config, fallback_file)
+    cached = lock(_AMR_PLAN_CACHE_LOCK) do
+        get(_AMR_PLAN_CACHE, key, nothing)
+    end
+    cached === nothing || return cached
+
+    plan = build_amr_raster_plan(load_amr_geometry(simu, config, fallback_file))
+    return lock(_AMR_PLAN_CACHE_LOCK) do
+        if length(_AMR_PLAN_CACHE) >= _AMR_PLAN_CACHE_LIMIT
+            delete!(_AMR_PLAN_CACHE, first(keys(_AMR_PLAN_CACHE)))
+        end
+        get!(_AMR_PLAN_CACHE, key, plan)
+    end
+end
+
+"""Rasterize a field without mixing distinct AMR leaf-cell states."""
+function rasterize_amr_field(values::AbstractArray, plan::AMRRasterPlan; label::AbstractString="field")
     field = vec(values)
-    ncell = size(geometry.centers, 1)
+    ncell = size(plan.geometry.centers, 1)
     length(field) == ncell || throw_config_error(
         "AMR $(label) has $(length(field)) values but the geometry has $(ncell) cells.";
         code=:cube_shape_mismatch)
     all(isfinite, field) || throw_config_error("AMR $(label) contains non-finite values."; code=:invalid_field_sources)
 
-    shape = geometry.shape
-    voxel_width = ntuple(axis -> (geometry.bounds[axis][2] - geometry.bounds[axis][1]) / shape[axis], 3)
-    voxel_volume = prod(voxel_width)
-    weighted = zeros(Float64, shape)
-    covered = zeros(Float64, shape)
-
-    for cell in 1:ncell
-        lower = ntuple(axis -> geometry.centers[cell, axis] - geometry.widths[cell, axis] / 2, 3)
-        upper = ntuple(axis -> geometry.centers[cell, axis] + geometry.widths[cell, axis] / 2, 3)
-        ranges = ntuple(3) do axis
-            lo, hi = geometry.bounds[axis]
-            first_index = clamp(floor(Int, (lower[axis] - lo) / voxel_width[axis]) + 1, 1, shape[axis])
-            last_index = clamp(ceil(Int, (upper[axis] - lo) / voxel_width[axis]), 1, shape[axis])
-            first_index:last_index
-        end
-
-        for k in ranges[3], j in ranges[2], i in ranges[1]
-            indices = (i, j, k)
-            overlap = 1.0
-            for axis in 1:3
-                voxel_lo = geometry.bounds[axis][1] + (indices[axis] - 1) * voxel_width[axis]
-                voxel_hi = voxel_lo + voxel_width[axis]
-                overlap *= max(0.0, min(upper[axis], voxel_hi) - max(lower[axis], voxel_lo))
-            end
-            overlap == 0 && continue
-            weighted[i, j, k] += Float64(field[cell]) * overlap
-            covered[i, j, k] += overlap
-        end
+    result = fill(NaN, plan.geometry.shape)
+    @inbounds for index in eachindex(plan.cell_index)
+        cell = plan.cell_index[index]
+        cell == 0 || (result[index] = Float64(field[cell]))
     end
-
-    tolerance_volume = geometry.tolerance * voxel_volume
-    uncovered = findfirst(<(voxel_volume - tolerance_volume), covered)
-    overlap = findfirst(>(voxel_volume + tolerance_volume), covered)
-    if geometry.strict && uncovered !== nothing
-        throw_config_error("AMR leaf cells do not cover output voxel $(Tuple(uncovered)) completely."; code=:cube_shape_mismatch)
-    end
-    if geometry.strict && overlap !== nothing
-        throw_config_error("AMR leaf cells overlap in output voxel $(Tuple(overlap)); provide leaf cells only."; code=:cube_shape_mismatch)
-    end
-
-    result = fill(NaN, shape)
-    valid = covered .> tolerance_volume
-    result[valid] .= weighted[valid] ./ covered[valid]
     return result
 end
 
-function read_amr_field(source, conversion::Real, geometry::AMRGeometry)
+function rasterize_amr_field(values::AbstractArray, geometry::AMRGeometry; kwargs...)
+    return rasterize_amr_field(values, build_amr_raster_plan(geometry); kwargs...)
+end
+
+function read_amr_field(source, conversion::Real, plan::AMRRasterPlan)
     source isa HDF5DatasetSource || throw_config_error(
         "AMR fields must use HDF5 dataset sources (`path` plus `dataset`).";
         code=:invalid_field_sources)
     values = read_file(source, conversion; expected_ndims=nothing)
-    return rasterize_amr_field(values, geometry; label=source_label(source))
+    return rasterize_amr_field(values, plan; label=source_label(source))
 end

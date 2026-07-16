@@ -25,6 +25,32 @@ jobs:
       - name: Run package tests
         run: julia --startup-file=no --project=. -e 'using Pkg; Pkg.instantiate(); Pkg.test()'
 
+  python:
+    name: Python frontend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+      - name: Run frontend tests
+        run: python -m unittest discover -s test -p 'test_*.py' -v
+
+  notebook:
+    name: Pluto notebook
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: "1.12"
+      - uses: julia-actions/cache@v2
+      - name: Instantiate notebook environment
+        working-directory: notebooks
+        run: julia --startup-file=no --project=. -e 'using Pkg; Pkg.develop(path=".."); Pkg.instantiate()'
+      - name: Validate one-screen and two-screen scenarios
+        run: julia --startup-file=no --project=notebooks notebooks/check_notebook.jl
+
   docker:
     name: Docker build
     runs-on: ubuntu-latest

@@ -101,6 +101,12 @@ contain leaf cells only. By default MOOSE rejects gaps and overlaps; set
 `"strict": false` only for intentionally partial domains. AMR currently uses
 the in-memory path and is therefore incompatible with `tile_size`.
 
+For physical correctness, every leaf-cell boundary must align with the target
+grid and `shape` must resolve the finest AMR level. MOOSE rejects coarser or
+misaligned targets instead of averaging magnetic field, density, and
+temperature before the nonlinear emissivity calculation. The cell-to-voxel
+assignment is cached and reused for all fields and lines of sight.
+
 ## Citation
 
 If you use Moose in scientific work, please cite the associated paper:

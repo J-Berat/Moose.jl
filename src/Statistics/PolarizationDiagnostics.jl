@@ -3,9 +3,18 @@ function _unwrap_phase(phases::AbstractVector)
 
     unwrapped = collect(Float64, phases)
     offset = 0.0
-    previous = unwrapped[1]
-    @inbounds for i in 2:length(unwrapped)
+    previous = NaN
+    @inbounds for i in eachindex(unwrapped)
         current = unwrapped[i]
+        if !isfinite(current)
+            previous = NaN
+            offset = 0.0
+            continue
+        end
+        if !isfinite(previous)
+            previous = current
+            continue
+        end
         delta = current - previous
         if delta > pi
             offset -= 2pi
@@ -81,7 +90,21 @@ function _representative_stokes_spectra(Qnu::AbstractArray, Unu::AbstractArray, 
         return collect(Float64, Qnu), collect(Float64, Unu), collect(Float64, Tnu), ()
     end
 
-    spatial_index = Pnumax === nothing ? Tuple(fill(1, ndims(Qnu) - 1)) : Tuple(argmax(Pnumax))
+    if Pnumax === nothing
+        spatial_index = Tuple(fill(1, ndims(Qnu) - 1))
+    else
+        finite_index = findfirst(isfinite, Pnumax)
+        finite_index === nothing && error("Pnumax contains no finite pixel from which to select a representative spectrum.")
+        spatial_index = Tuple(finite_index)
+        best = Pnumax[finite_index]
+        for idx in eachindex(Pnumax)
+            value = Pnumax[idx]
+            if isfinite(value) && value > best
+                best = value
+                spatial_index = Tuple(CartesianIndices(Pnumax)[idx])
+            end
+        end
+    end
     length(spatial_index) == ndims(Qnu) - 1 ||
         error("Pnumax shape $(size(Pnumax)) is incompatible with Stokes cube shape $(size(Qnu)).")
 
@@ -100,6 +123,8 @@ function polarization_diagnostic_spectra(Qnu::AbstractArray, Unu::AbstractArray,
     q_stokes, u_stokes, i_stokes, spatial_index = _representative_stokes_spectra(Qnu, Unu, Tnu, Pnumax)
     length(q_stokes) == length(nu_hz) ||
         error("Frequency axis length $(length(nu_hz)) does not match Stokes spectral length $(length(q_stokes)).")
+    all(nu -> isfinite(nu) && nu > 0, nu_hz) ||
+        throw(ArgumentError("Frequencies must be positive and finite."))
 
     lambda2 = (C_m ./ collect(Float64, nu_hz)) .^ 2
     p_stokes = hypot.(q_stokes, u_stokes)
