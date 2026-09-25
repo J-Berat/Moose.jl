@@ -531,16 +531,23 @@ below (see §13).
 @bind beam_on CheckBox(default = false)
 
 # ╔═╡ 00000000-0000-0000-0000-000000001054
-@bind beam_fwhm_pix Slider(1.0:1.0:12.0; default = 3.0, show_value = true)
+@bind beam_fwhm_pix Slider(3.0:1.0:12.0; default = 3.0, show_value = true)
+
+# ╔═╡ b0d34118-f424-4f18-9ae4-9e56647d3981
+@bind filter_edge Select(["hard", "aperture"]; default = "hard")
+
+# ╔═╡ b0d34118-f424-4f18-9ae4-9e56647d3982
+@bind filter_kD Slider(0.01:0.01:0.3; default = 0.05, show_value = true)
 
 # ╔═╡ 00000000-0000-0000-0000-000000001055
 md"""
 `noise_on`/`snr_level`: gaussian noise on Q,U whose standard deviation is set to reach the
 requested polarized signal-to-noise ratio `SNR_nu` — exactly MOOSE's own convention
 (`add_noise = "Y"`, configuration key `SNR_nu`; see §12). `beam_on`/`beam_fwhm_pix`: spatial
-band-pass filtering with the real function `Moose.instrument_bandpass_L` (equivalent to
+band-pass filtering with the real function `Moose.instrument_bandpass` (equivalent to
 `responseSynchrotron = "Y"`, `kernel_size_synchrotron`), which removes scales larger than
-`beam_fwhm_pix` pixels.
+`beam_fwhm_pix` pixels. `filter_edge` selects `hard` or `aperture`;
+`filter_kD` is the aperture width in cycles/pixel (achromatic in this notebook).
 """
 
 # ╔═╡ 00000000-0000-0000-0000-000000001056
@@ -1225,10 +1232,10 @@ md"""
 MOOSE provides two public instrumental effects, applied in this order by `ProcessSynchrotron.jl`
 when `responseSynchrotron = "Y"` / `add_noise = "Y"` in the configuration:
 
-1. **Interferometric spatial filtering** — a hard Fourier mask that removes scales larger than
+1. **Interferometric spatial filtering** — a hard or aperture-smoothed Fourier response that suppresses scales larger than
    `Llarge` (the interferometer cannot see the most extended structures) and smaller than the
    Nyquist limit, with the public functions
-   `Moose.instrument_bandpass_L`/`Moose.apply_to_array_xy`. MOOSE does **not** provide a Gaussian
+   `Moose.instrument_bandpass`/`Moose.apply_to_array_xy`. MOOSE does **not** provide a Gaussian
    beam convolution function for cartesian cubes in its current public API (only the HEALPix
    branch exposes `healpix_smooth`, see §19): `beam_fwhm_pix` below therefore controls `Llarge`
    (largest spatial scale retained, in pixels), not a PSF width.
@@ -1259,7 +1266,8 @@ instrumental_panels = if freq_range_valid
 		Qch = Q_cube[:, :, viz_channel]
 		Uch = U_cube[:, :, viz_channel]
 
-		H, _ = Moose.instrument_bandpass_L(N, N; Δx = 1.0, Δy = 1.0, Lcut_small = 2.0,
+		H, _ = Moose.instrument_bandpass(N, N; edge = Symbol(filter_edge),
+		                                    (filter_edge == "aperture" ? (; kD = filter_kD) : (;))..., Δx = 1.0, Δy = 1.0, Lcut_small = 2.0,
 		                                    Llarge = Float64(beam_fwhm_pix), fNy = 0.5)
 		Q_filt = beam_on ? Moose.apply_to_array_xy(Qch, H; n = N, m = N) : copy(Qch)
 		U_filt = beam_on ? Moose.apply_to_array_xy(Uch, H; n = N, m = N) : copy(Uch)
@@ -1286,7 +1294,8 @@ if instrumental_panels === nothing
 else
 	let
 		N = test_cube.N
-		H, _ = Moose.instrument_bandpass_L(N, N; Δx = 1.0, Δy = 1.0, Lcut_small = 2.0,
+		H, _ = Moose.instrument_bandpass(N, N; edge = Symbol(filter_edge),
+		                                    (filter_edge == "aperture" ? (; kD = filter_kD) : (;))..., Δx = 1.0, Δy = 1.0, Lcut_small = 2.0,
 		                                    Llarge = Float64(beam_fwhm_pix), fNy = 0.5)
 		rng = MersenneTwister(cube_seed + 1000)
 
@@ -2995,6 +3004,8 @@ md"""
 # ╠═00000000-0000-0000-0000-000000001052
 # ╠═00000000-0000-0000-0000-000000001053
 # ╠═00000000-0000-0000-0000-000000001054
+# ╠═b0d34118-f424-4f18-9ae4-9e56647d3981
+# ╠═b0d34118-f424-4f18-9ae4-9e56647d3982
 # ╟─00000000-0000-0000-0000-000000001055
 # ╟─00000000-0000-0000-0000-000000001056
 # ╠═00000000-0000-0000-0000-000000001057

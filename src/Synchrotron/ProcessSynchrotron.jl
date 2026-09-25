@@ -189,26 +189,37 @@ function _write_integrated_quantities_healpix(resultspath, B1, B2, BLOS, T, ne, 
     return nothing
 end
 
-function _apply_synchrotron_filter!(Qnu, Unu, T_nu, Llarge_filter_pix)
-    # The filter works entirely in PIXEL units (Δx = Δy = 1 pixel), matching
-    # the documented convention: `kernel_size_synchrotron` is the largest
-    # retained spatial scale in pixels. No small-scale cut is applied beyond
-    # the Nyquist limit (Lcut_small = 2 pixels ⇔ f = fNy = 0.5 cycle/pixel).
+function _apply_synchrotron_filter!(Qnu, Unu, T_nu, Llarge_filter_pix;
+                                      filter_options=nothing, frequencies_mhz=nothing)
+    options = normalize_filter_options(filter_options)
+    size(Qnu) == size(Unu) == size(T_nu) || error("Q/U/T shapes must agree")
     n, m = size(Qnu, 1), size(Qnu, 2)
-    H, _ = instrument_bandpass_L(
-        n,
-        m;
-        Δx = 1.0,
-        Δy = 1.0,
-        Lcut_small = 2.0,
-        Llarge = Float64(Llarge_filter_pix),
-        fNy = 0.5,
-    )
-
-    Qnu .= apply_to_array_xy(Qnu, H; n = n, m = m)
-    Unu .= apply_to_array_xy(Unu, H; n = n, m = m)
-    T_nu .= apply_to_array_xy(T_nu, H; n = n, m = m)
-
+    chromatic = options["chromatic"]
+    if chromatic
+        frequencies_mhz !== nothing && length(frequencies_mhz) == size(Qnu, 3) ||
+            error("Chromatic filtering requires one frequency per channel")
+        all(x -> isfinite(x) && x > 0, frequencies_mhz) || error("Frequencies must be positive and finite")
+    end
+    function mask(ic)
+        extra = if options["edge"] == "aperture"
+            scale = chromatic ? frequencies_mhz[ic] / options["reference_frequency_mhz"] : 1.0
+            (; kD=options["kD"] * scale, smooth_high=options["smooth_high"],
+               nquad=options["nquad"], nlut=options["nlut"])
+        else
+            (;)
+        end
+        return first(instrument_bandpass(n, m; edge=Symbol(options["edge"]),
+            Δx=1.0, Lcut_small=options["Lcut_small"], Llarge=Float64(Llarge_filter_pix),
+            fNy=0.5, extra...))
+    end
+    H = mask(1)
+    # Share each channel's mask across all Stokes cubes without caching an entire cube.
+    for ic in axes(Qnu, 3)
+        chromatic && ic != 1 && (H = mask(ic))
+        for cube in (Qnu, Unu, T_nu)
+            @views cube[:, :, ic] .= apply_instrument_2d(cube[:, :, ic], H)
+        end
+    end
     return nothing
 end
 
@@ -362,6 +373,7 @@ function _process_synchrotron_common(
     outputs=Set(["integrated", "stokes", "rm", "fdf", "spectral_index", "diagnostics"]),
     checkpoint_signature=nothing,
     rfi_ranges=Tuple{Float64, Float64}[],
+    filter_options=nothing,
 )
     selected_outputs = Set(String.(outputs))
     want(name) = name in selected_outputs
@@ -524,7 +536,18 @@ function _process_synchrotron_common(
                 code=:unsupported_grid_operation)
         _stage("Applying interferometric Fourier mask")
         need_qu && need_t || throw_config_error("Filtering selective outputs requires both Q/U and T; include `stokes` or `diagnostics`."; code=:invalid_outputs)
-        _apply_synchrotron_filter!(Qnu, Unu, T_nu, kernel_size_synchrotron)
+        _apply_synchrotron_filter!(Qnu, Unu, T_nu, kernel_size_synchrotron;
+            filter_options=filter_options, frequencies_mhz=nuArray)
+        options = normalize_filter_options(filter_options)
+        fits_metadata["FILTEDGE"] = options["edge"]
+        fits_metadata["FILTCHR"] = options["chromatic"]
+        fits_metadata["FILTLMAX"] = Float64(kernel_size_synchrotron)
+        fits_metadata["FILTLMIN"] = options["Lcut_small"]
+        if options["edge"] == "aperture"
+            fits_metadata["FILTKD"] = options["kD"]
+            fits_metadata["FILTREF"] = options["reference_frequency_mhz"]
+            fits_metadata["FILTSMHI"] = options["smooth_high"]
+        end
         resultspath = joinpath(resultspath, "filtered")
         mkpath(resultspath)
     else
@@ -690,7 +713,7 @@ function ProcessSynchrotron(simu::AbstractString, LOS, FaradayRotation::Abstract
                        float_type::Type{<:AbstractFloat} = Float64, tile_rows::Union{Nothing, Integer} = nothing, field_sources=nothing,
                        physical_mask=nothing, density_kind::AbstractString="number_density", mean_molecular_weight::Real=1.0,
                        hydrogen_mass_g::Real=M_p, outputs=Set(["integrated", "stokes", "rm", "fdf", "spectral_index", "diagnostics"]),
-                       checkpoint_signature=nothing, rfi_ranges=Tuple{Float64, Float64}[])
+                       checkpoint_signature=nothing, rfi_ranges=Tuple{Float64, Float64}[], filter_options=nothing)
     return _process_synchrotron_common(
         simu,
         LOS,
@@ -726,6 +749,7 @@ function ProcessSynchrotron(simu::AbstractString, LOS, FaradayRotation::Abstract
         outputs = outputs,
         checkpoint_signature = checkpoint_signature,
         rfi_ranges = rfi_ranges,
+        filter_options = filter_options,
     )
 end
 
@@ -737,7 +761,7 @@ function ProcessSynchrotron(simu::String, LOS, FaradayRotation::String, response
                        float_type::Type{<:AbstractFloat} = Float64, tile_rows::Union{Nothing, Integer} = nothing, field_sources=nothing,
                        physical_mask=nothing, density_kind::AbstractString="number_density", mean_molecular_weight::Real=1.0,
                        hydrogen_mass_g::Real=M_p, outputs=Set(["integrated", "stokes", "rm", "fdf", "spectral_index", "diagnostics"]),
-                       checkpoint_signature=nothing, rfi_ranges=Tuple{Float64, Float64}[])
+                       checkpoint_signature=nothing, rfi_ranges=Tuple{Float64, Float64}[], filter_options=nothing)
     return _process_synchrotron_common(
         simu,
         LOS,
@@ -773,6 +797,7 @@ function ProcessSynchrotron(simu::String, LOS, FaradayRotation::String, response
         outputs = outputs,
         checkpoint_signature = checkpoint_signature,
         rfi_ranges = rfi_ranges,
+        filter_options = filter_options,
     )
 end
 
@@ -784,7 +809,7 @@ function ProcessSynchrotron(simu::String, LOS, FaradayRotation::String, response
                        float_type::Type{<:AbstractFloat} = Float64, tile_rows::Union{Nothing, Integer} = nothing, field_sources=nothing,
                        physical_mask=nothing, density_kind::AbstractString="number_density", mean_molecular_weight::Real=1.0,
                        hydrogen_mass_g::Real=M_p, outputs=Set(["integrated", "stokes", "rm", "fdf", "spectral_index", "diagnostics"]),
-                       checkpoint_signature=nothing, rfi_ranges=Tuple{Float64, Float64}[])
+                       checkpoint_signature=nothing, rfi_ranges=Tuple{Float64, Float64}[], filter_options=nothing)
     return _process_synchrotron_common(
         simu,
         LOS,
@@ -820,5 +845,6 @@ function ProcessSynchrotron(simu::String, LOS, FaradayRotation::String, response
         outputs = outputs,
         checkpoint_signature = checkpoint_signature,
         rfi_ranges = rfi_ranges,
+        filter_options = filter_options,
     )
 end

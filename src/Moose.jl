@@ -1,6 +1,6 @@
 module Moose
 
-using BesselK
+using SpecialFunctions: besselk
 using QuadGK
 using Crayons
 using Dates

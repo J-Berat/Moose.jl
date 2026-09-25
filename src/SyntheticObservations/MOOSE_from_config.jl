@@ -7,7 +7,7 @@ using Dates
 using JSON
 
 using ..Moose: PARSEC_TO_CM, RunConfig, ValidationResult, ensure_directory_access,
-               build_density_parameters,
+               build_density_parameters, normalize_filter_options,
                ensure_readable_file, normalize_los_float_values, normalize_los_int_values,
                normalize_rng_seed, normalize_field_sources, normalize_physical_mask,
                run_moose_processing, throw_config_error,
@@ -371,9 +371,12 @@ function build_config(cfg, config_path)
         IonizationFraction <= 1.0 || throw_config_error("`IonizationFraction` must be <= 1.0."; code=:invalid_ne_option)
     end
 
+    filter_options = normalize_filter_options(get(cfg, "filter", nothing))
     if responseSynchrotron == "Y"
         kernel_size_synchrotron === nothing && throw_config_error("`kernel_size_synchrotron` is required when `responseSynchrotron` is enabled."; code=:missing_filter_kernel)
         kernel_size_synchrotron = validate_positive_finite(kernel_size_synchrotron, "kernel_size_synchrotron")
+        kernel_size_synchrotron > filter_options["Lcut_small"] || throw_config_error(
+            "kernel_size_synchrotron must exceed filter.Lcut_small"; code=:invalid_filter)
     end
 
     if add_noise == "Y"
@@ -470,6 +473,7 @@ function build_config(cfg, config_path)
         resume = resume,
         outputs = outputs,
         rfi_ranges = rfi_ranges,
+        filter_options = filter_options,
     ), simu_paths
 end
 

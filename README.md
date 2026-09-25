@@ -171,3 +171,42 @@ Moose is distributed under the [MIT License](LICENSE).
 ## Author
 
 **Jack Berat** — main developer
+
+### Instrumental Fourier filter
+
+Enable filtering with `"responseSynchrotron": "Y"`. The existing
+`kernel_size_synchrotron` is the largest retained scale in pixels.
+The optional `filter` object selects the model implemented in `src/Filtering/Filter.jl`:
+
+```json
+"responseSynchrotron": "Y",
+"kernel_size_synchrotron": 154.0,
+"filter": {
+  "edge": "aperture",
+  "kD": 0.01,
+  "chromatic": true,
+  "reference_frequency_mhz": 144.0,
+  "smooth_high": true,
+  "Lcut_small": 2.0
+}
+```
+
+Use `"filter": {"edge": "hard"}` for the original binary band-pass (also the
+backward-compatible default). `aperture` smooths the edges with the circular
+aperture autocorrelation; it is an idealized instrumental response, not a full
+uv-coverage simulation. `kD` is required in **cycles/pixel**, at the reference
+frequency. For physical parameters, compute
+`kD = Moose.aperture_kD(reference_frequency_mhz * 1e6; d=distance_pc, D=diameter_m) * pixel_size_pc`.
+The numeric value above is illustrative; set it for your map and instrument.
+This scalar pixel conversion assumes equal sky-plane pixel sizes.
+
+With `chromatic: true`, kD scales with each channel's frequency; the scale cuts
+remain fixed (a cut in wavelengths). With `false` (default), the reference
+mask is shared across channels. `smooth_high: false` keeps the upper cut sharp.
+`Lcut_small` defaults to 2 pixels; the radial Nyquist cap remains 0.5 cycles/pixel.
+Optional quadrature settings are `nquad: 256` and `nlut: 8192`.
+
+The same response is applied to Q, U and T before P and downstream diagnostics
+are recomputed. These options pass through JSON configuration, the Julia/Python
+config-file entry points, saved run configuration and resume signatures.
+Filtered FITS headers record the selected model and its principal parameters.

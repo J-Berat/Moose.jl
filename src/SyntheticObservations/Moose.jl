@@ -445,6 +445,7 @@ struct RunConfig
     hydrogen_mass_g::Float64
     resume::String
     outputs::Set{String}
+    filter_options::Dict{String, Any}
     rfi_ranges::Vector{Tuple{Float64, Float64}}
 
     function RunConfig(
@@ -488,6 +489,7 @@ struct RunConfig
         hydrogen_mass_g=M_p,
         resume="off",
         outputs=["all"],
+        filter_options=nothing,
         rfi_ranges=Tuple{Float64, Float64}[],
     )
         precision_flag = lowercase(String(precision))
@@ -558,6 +560,7 @@ struct RunConfig
             normalize_positive_config_float(hydrogen_mass_g, "hydrogen_mass_g"),
             resume_mode,
             output_set,
+            normalize_filter_options(filter_options),
             Tuple{Float64, Float64}[(Float64(lo), Float64(hi)) for (lo, hi) in rfi_ranges],
         )
     end
@@ -593,6 +596,7 @@ function config_dict_from_struct(cfg::RunConfig)
         ),
         "responseSynchrotron" => cfg.responseSynchrotron,
         "kernel_size_synchrotron" => cfg.kernel_size_synchrotron,
+        "filter" => cfg.filter_options,
         "add_noise" => cfg.add_noise,
         "SNR_nu" => cfg.SNR_nu,
         "interpolation_file_path" => cfg.interpolation_file_path,
@@ -774,6 +778,7 @@ function preflight_plan(cfg::RunConfig; io::IO=stdout)
     need_t = want("stokes") || want("spectral_index") || want("diagnostics")
 
     println(io, "MOOSE preflight plan")
+    cfg.responseSynchrotron == "Y" && println(io, "Fourier filter: $(cfg.filter_options["edge"]) | chromatic: $(cfg.filter_options["chromatic"])")
     println(io, "Frequency channels: $(nfreq) ($(nrfi) RFI-flagged)" * (nphi > 0 ? " | Faraday-depth channels: $(nphi)" : ""))
     for simu in cfg.simulations
         grid = simulation_grid_kind(simu, cfg.field_sources)
@@ -986,7 +991,7 @@ function _run_moose_processing(cfg::RunConfig; quiet::Bool = false, persisted_co
                     float_type = float_type, tile_rows = cfg.tile_size, field_sources = cfg.field_sources,
                     physical_mask = cfg.physical_mask, density_kind = cfg.density_kind,
                     mean_molecular_weight = cfg.mean_molecular_weight, hydrogen_mass_g = cfg.hydrogen_mass_g,
-                    outputs = cfg.outputs, checkpoint_signature = checkpoint_signature, rfi_ranges = cfg.rfi_ranges)
+                    outputs = cfg.outputs, checkpoint_signature = checkpoint_signature, rfi_ranges = cfg.rfi_ranges, filter_options = cfg.filter_options)
             elseif cfg.ne_option == "2"
                 ProcessSynchrotron(simu, LOS, cfg.faraday_rotation, cfg.responseSynchrotron, df, cfg.add_noise, cfg.SNR_nu,
                     cfg.kernel_size_synchrotron, ion_fraction, nuArray, PhiArray, PixelLength_pc, PixelLength_cm,
@@ -997,7 +1002,7 @@ function _run_moose_processing(cfg::RunConfig; quiet::Bool = false, persisted_co
                     float_type = float_type, tile_rows = cfg.tile_size, field_sources = cfg.field_sources,
                     physical_mask = cfg.physical_mask, density_kind = cfg.density_kind,
                     mean_molecular_weight = cfg.mean_molecular_weight, hydrogen_mass_g = cfg.hydrogen_mass_g,
-                    outputs = cfg.outputs, checkpoint_signature = checkpoint_signature, rfi_ranges = cfg.rfi_ranges)
+                    outputs = cfg.outputs, checkpoint_signature = checkpoint_signature, rfi_ranges = cfg.rfi_ranges, filter_options = cfg.filter_options)
             else
                 ProcessSynchrotron(simu, LOS, cfg.faraday_rotation, cfg.responseSynchrotron, df, cfg.add_noise, cfg.SNR_nu,
                     cfg.kernel_size_synchrotron, nuArray, PhiArray, PixelLength_pc, PixelLength_cm,
@@ -1008,7 +1013,7 @@ function _run_moose_processing(cfg::RunConfig; quiet::Bool = false, persisted_co
                     float_type = float_type, tile_rows = cfg.tile_size, field_sources = cfg.field_sources,
                     physical_mask = cfg.physical_mask, density_kind = cfg.density_kind,
                     mean_molecular_weight = cfg.mean_molecular_weight, hydrogen_mass_g = cfg.hydrogen_mass_g,
-                    outputs = cfg.outputs, checkpoint_signature = checkpoint_signature, rfi_ranges = cfg.rfi_ranges)
+                    outputs = cfg.outputs, checkpoint_signature = checkpoint_signature, rfi_ranges = cfg.rfi_ranges, filter_options = cfg.filter_options)
             end
             _write_completion_manifest(cfg, simu, LOS, resume_hash)
         end
@@ -1252,6 +1257,18 @@ function run_moose_interactive(; quiet::Bool = false, reset_config::Bool = true)
     kernel_size_synchrotron = uppercase(responseSynchrotron) == "Y" ? ask_user("Largest Fourier scale to keep for Synchrotron filtering (in pixels, e.g. 154)", get(config, "kernel_size_synchrotron", 154.0)) : nothing
     config["responseSynchrotron"] = responseSynchrotron
     config["kernel_size_synchrotron"] = kernel_size_synchrotron
+    if uppercase(responseSynchrotron) == "Y"
+        options = get(config, "filter", Dict{String, Any}())
+        options["edge"] = lowercase(ask_user("Fourier filter model (hard/aperture)", get(options, "edge", "hard");
+            validate = value -> lowercase(string(value)) in ("hard", "aperture"),
+            error_message = "Please choose hard or aperture."))
+        if options["edge"] == "aperture"
+            options["kD"] = ask_user("Aperture width kD at reference frequency (cycles/pixel)", get(options, "kD", nothing) === nothing ? 0.01 : options["kD"])
+        else
+            options["chromatic"] = false
+        end
+        config["filter"] = normalize_filter_options(options)
+    end
 
     add_noise = ask_user("Do you want to add noise to Q and U? (Y/N)", get(config, "add_noise", "N");
         validate = is_yes_no, error_message = "Please answer Y or N.")
@@ -1416,6 +1433,7 @@ function run_moose_interactive(; quiet::Bool = false, reset_config::Bool = true)
         config_path,
         get(config, "log_progress", true),
         rng_seed;
+        filter_options = get(config, "filter", nothing),
         rm_clean_enabled = rm_clean_enabled,
         rm_clean_gain = rm_clean_gain,
         rm_clean_niter = rm_clean_niter,

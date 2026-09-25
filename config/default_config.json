@@ -43,6 +43,7 @@
   },
   "responseSynchrotron": "N",
   "kernel_size_synchrotron": 154.0,
+  "filter": {"edge": "hard"},
   "add_noise": "N",
   "SNR_nu": 0.9,
   "rng_seed": null,

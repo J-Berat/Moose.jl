@@ -2478,3 +2478,5 @@ end
         @test all(isfile, paths.fdf)
     end
 end
+
+include("filtering.jl")
