@@ -104,10 +104,6 @@ function instrument_bandpass_L(n::Int, m::Int;
                                Llarge::Real,
                                fNy::Real)
     _check_bandpass_inputs(n, m, Δx, Δy, Lcut_small, Llarge, fNy)
-
-    # fftfreq(n, fs) expects the *sampling frequency* fs = 1/Δx, not the step Δx.
-    # Spatial frequencies are then in cycles per unit of Δx (same unit as
-    # Lcut_small/Llarge, which must be expressed in that same length unit).
     fx = FFTW.fftfreq(n, 1 / Δx)
     fy = FFTW.fftfreq(m, 1 / Δy)
 
