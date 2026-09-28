@@ -62,11 +62,11 @@ A NamedTuple with `base_dir`, `simulation_dir`, `config_path`,
 - `nu_MHz`, `lambda2_m2`: channel frequencies and λ² values.
 - `qnu_over_tnu`, `unu_over_tnu`: per-channel `Q/T` and `U/T` (exact):
   `Q/T = p·cos 2(ψ_src + RM λ²)`, `U/T = p·sin 2(ψ_src + RM λ²)` with
-  `ψ_src = π` (equivalent to 0 modulo π), `p = pol_fraction`, and `RM = RM_s` when `faraday = true`,
+  `ψ_src = π/2` (electric vector perpendicular to Bx), `p = pol_fraction`, and `RM = RM_s` when `faraday = true`,
   `RM = 0` otherwise.
 - `pol_fraction`: `√(Q²+U²)/T` per channel (exact, no depolarization since
   the emitter is Faraday-thin).
-- `intrinsic_pol_angle = 0`: `ψ_src` modulo π (rad); equals `½·atan(U, Q)` mod π
+- `intrinsic_pol_angle = π/2`: `ψ_src` modulo π (rad); equals `½·atan(U, Q)` mod π
   when `faraday = false`.
 - `intne`, `intBLOS`: integrated maps (cm⁻², µG·cm), exact and uniform.
 - `fdf_peak_phi`: Faraday depth of the |FDF| peak = `RM_s` (`nothing` when
@@ -130,7 +130,7 @@ function make_demo_data(dir::AbstractString;
     # and the RM cube is a cumulative sum from slice 1 to slice npix. Putting
     # the screen in slices 1:h means every emitting cell sees the full screen
     # RM. The pipeline evaluates IntrinsicAngle(B1, B2), so By = 0 and Bx > 0
-    # gives psi_src = π, equivalent to 0 modulo π, in the emitter.
+    # gives psi_src = π/2, perpendicular to the magnetic field, in the emitter.
     n = Int(npix)
     h = fld(n, 2)
 
@@ -200,8 +200,8 @@ function make_demo_data(dir::AbstractString;
         for nui in nu
     ]
 
-    psi_src = pi
-    intrinsic_pol_angle = 0.0
+    psi_src = pi / 2
+    intrinsic_pol_angle = pi / 2
     lambda2 = [(C_m / (nui * 1e6))^2 for nui in nu]
     rm_seen = faraday ? rm_screen : 0.0
     qnu_over_tnu = [Float64(pol_fraction) * cos(2 * (psi_src + rm_seen * l2)) for l2 in lambda2]

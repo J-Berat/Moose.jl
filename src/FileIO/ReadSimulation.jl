@@ -29,19 +29,21 @@ Reads and processes simulation data from FITS or HDF5 files for a specified line
 """
     los_basis(Ax, Ay, Az, LOS) -> (A1, A2, ALOS)
 
-Map cartesian vector components onto the right-handed (plane-of-sky ⊕ LOS)
-basis using cyclic permutations (determinant +1, chirality preserved):
-LOS = "z" → (Ax, Ay, Az) ; LOS = "x" → (Ay, Az, Ax) ; LOS = "y" → (Az, Ax, Ay).
+Map Cartesian components onto the ordered sky axes and the LOS component:
+LOS = "z" → (Ax, Ay, Az) ; LOS = "x" → (Ay, Az, Ax) ; LOS = "y" → (Ax, Az, Ay).
 
-This is the single source of truth for the LOS frame convention: the intrinsic
-polarization angle ψ_src = atan(A2, A1) + π/2 is only consistent across the
-three lines of sight if the same orientation-preserving mapping is used
-everywhere.
+The intrinsic electric-vector angle is measured from the first sky axis toward
+the second: IntrinsicAngle(A1, A2) = atan(A2, A1) + π/2. In particular, LOS y
+uses x as the reference axis and z as the second sky axis. This is a sky-axis
+convention, not a cyclic right-handed triad: ex × ez = -ey. The existing
+signed Faraday convention remains ψ = ψ_src + RM λ² with BLOS = Ay for LOS y;
+no extra sign is inferred here from the handedness of the Cartesian triad.
+This component ordering does not transpose the stored map dimensions.
 """
 function los_basis(Ax, Ay, Az, LOS::AbstractString)
     LOS == "z" && return (Ax, Ay, Az)
     LOS == "x" && return (Ay, Az, Ax)
-    LOS == "y" && return (Az, Ax, Ay)
+    LOS == "y" && return (Ax, Az, Ay)
     error("Unknown LOS: $LOS (expected \"x\", \"y\" or \"z\")")
 end
 

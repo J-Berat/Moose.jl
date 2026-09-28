@@ -283,12 +283,7 @@ end
         Lcut_small=1.0, Llarge=2.0, fNy=0.5)
 end
 
-@testset "Regression — LOS basis is cyclic for all three LOS (BUG-1)" begin
-    @test Moose.los_basis(:Ax, :Ay, :Az, "z") == (:Ax, :Ay, :Az)
-    @test Moose.los_basis(:Ax, :Ay, :Az, "x") == (:Ay, :Az, :Ax)
-    @test Moose.los_basis(:Ax, :Ay, :Az, "y") == (:Az, :Ax, :Ay)
-    @test_throws ErrorException Moose.los_basis(1, 2, 3, "w")
-end
+include("polarization_convention.jl")
 
 @testset "Regression — noise σ derives from SNR (BUG-2)" begin
     rng = Moose.Random.MersenneTwister(1234)
@@ -489,8 +484,8 @@ end
         @test Moose.read_file(joinpath(sim_dir, "Bx.h5"), 2.0; expected_ndims=3) == 2.0 .* bx
 
         B1, B2, BLOS, T, n, nH2, nHp = Moose.ReadSimulation(sim_dir, "y", 2.0, 3.0, 4.0)
-        @test B1 == permutedims(4.0 .* bz, [3, 1, 2])
-        @test B2 == permutedims(4.0 .* bx, [3, 1, 2])
+        @test B1 == permutedims(4.0 .* bx, [3, 1, 2])
+        @test B2 == permutedims(4.0 .* bz, [3, 1, 2])
         @test BLOS == permutedims(4.0 .* by, [3, 1, 2])
         @test T == permutedims(3.0 .* temperature, [3, 1, 2])
         @test n == permutedims(2.0 .* density, [3, 1, 2])
@@ -1563,8 +1558,8 @@ end
         tnu = read(FITS(joinpath(result_dir, "Tnu.fits"))[1])
         polfrac = read(FITS(joinpath(result_dir, "polfrac.fits"))[1])
 
-        # psi_src = π modulo π ⇒ Q/T = +pol_fraction, U ≈ 0.
-        @test all(isapprox.(qnu ./ tnu, demo.expected.pol_fraction; atol = 1e-8))
+        # B along the reference axis ⇒ electric vector perpendicular: Q/T = -p.
+        @test all(isapprox.(qnu ./ tnu, -demo.expected.pol_fraction; atol = 1e-8))
         @test all(abs.(unu) .<= 1e-10 .* tnu)
 
         pol_fraction = sqrt.(qnu .^ 2 .+ unu .^ 2) ./ tnu
