@@ -59,3 +59,27 @@
         @test saved["filter"]["chromatic"] == true
     end
 end
+
+@testset "rfft filtering matches the complex FFT and reuses plans" begin
+    for (n, m) in ((16, 12), (15, 11))
+        img = reshape(cos.(1:n*m) .+ 0.3 .* (1:n*m) ./ (n*m), n, m)
+        H = first(Moose.instrument_bandpass_aperture(n, m; Δx=1.0,
+            Lcut_small=2.0, Llarge=6.0, fNy=0.5, kD=0.05))
+        reference = real.(Moose.FFTW.ifft(Moose.FFTW.fft(img) .* H))
+        @test Moose.apply_instrument_2d(img, H) ≈ reference atol=1e-12
+        # One workspace serves several images, in place.
+        ws = Moose.FilterWorkspace(Float64, n, m)
+        a, b = copy(img), 2 .* img
+        Moose.apply_instrument_2d!(a, a, H, ws)
+        Moose.apply_instrument_2d!(b, b, H, ws)
+        @test a ≈ reference atol=1e-12
+        @test b ≈ 2 .* reference atol=1e-12
+    end
+    img32 = rand(Float32, 8, 8)
+    H = first(Moose.instrument_bandpass_L(8, 8; Δx=1.0, Lcut_small=2.0, Llarge=4.0, fNy=0.5))
+    @test eltype(Moose.apply_instrument_2d(img32, H)) == Float32
+    asymmetric = ones(8, 8); asymmetric[2, 1] = 0
+    @test_throws ArgumentError Moose.apply_instrument_2d(rand(8, 8), asymmetric)
+    @test_throws ErrorException Moose.apply_instrument_2d!(zeros(8, 8), rand(8, 8), H,
+        Moose.FilterWorkspace(Float64, 4, 4))
+end

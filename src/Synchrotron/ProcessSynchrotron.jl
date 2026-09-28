@@ -213,11 +213,12 @@ function _apply_synchrotron_filter!(Qnu, Unu, T_nu, Llarge_filter_pix;
             fNy=0.5, extra...))
     end
     H = mask(1)
-    # Share each channel's mask across all Stokes cubes without caching an entire cube.
+    ws = FilterWorkspace(float(promote_type(eltype(Qnu), eltype(Unu), eltype(T_nu))), n, m)
+    # Share each channel's mask and the FFTW plans across all Stokes cubes without caching an entire cube.
     for ic in axes(Qnu, 3)
         chromatic && ic != 1 && (H = mask(ic))
         for cube in (Qnu, Unu, T_nu)
-            @views cube[:, :, ic] .= apply_instrument_2d(cube[:, :, ic], H)
+            @views apply_instrument_2d!(cube[:, :, ic], cube[:, :, ic], H, ws)
         end
     end
     return nothing

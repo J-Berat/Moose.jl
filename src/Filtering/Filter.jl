@@ -5,19 +5,81 @@ using FFTW
 # =============================================================================
 
 """
-    apply_instrument_2d(img, H)
+    FilterWorkspace(T, n, m)
 
-Apply a 2D Fourier-domain instrumental transfer function. `H` is given in
-FFT order (zero frequency at index [1,1]). It can be the binary mask of
-`instrument_bandpass_L` or the smooth transfer function of
-`instrument_bandpass_aperture`.
+Buffers and FFTW real-to-complex plans for filtering many `n × m` images of
+float type `T`. Build one per image shape and pass it to
+`apply_instrument_2d!` so channels and Stokes cubes share the same plans.
 """
-function apply_instrument_2d(img::AbstractMatrix, H::AbstractMatrix)
+struct FilterWorkspace{T<:AbstractFloat,P,IP}
+    img::Matrix{T}
+    spec::Matrix{Complex{T}}
+    out::Matrix{T}
+    fwd::P
+    inv::IP
+end
+
+function FilterWorkspace(::Type{T}, n::Int, m::Int) where {T<:AbstractFloat}
+    n > 0 && m > 0 || error("Image size must be positive, got ($n,$m)")
+    img = zeros(T, n, m)
+    fwd = plan_rfft(img)
+    spec = fwd * img
+    inv = plan_irfft(spec, n)
+    return FilterWorkspace(img, spec, zeros(T, n, m), fwd, inv)
+end
+
+# H(k) == H(-k) on the FFT grid, up to a Float32-level tolerance.
+function _has_point_symmetry(H::AbstractMatrix)
+    n, m = size(H)
+    tol = sqrt(eps(Float32)) * max(maximum(abs, H), 1)
+    @inbounds for j in 1:m, i in 1:n
+        abs(H[i, j] - H[mod(1 - i, n) + 1, mod(1 - j, m) + 1]) <= tol || return false
+    end
+    return true
+end
+
+"""
+    apply_instrument_2d!(dest, img, H, ws::FilterWorkspace)
+
+In-place version of `apply_instrument_2d` that reuses the FFTW plans and
+buffers in `ws`. `dest` may alias `img`.
+"""
+function apply_instrument_2d!(dest::AbstractMatrix, img::AbstractMatrix, H::AbstractMatrix,
+                              ws::FilterWorkspace)
     size(img) == size(H) || error("Filter shape mismatch: image size=$(size(img)) filter size=$(size(H))")
+    size(img) == size(ws.img) || error("Workspace size $(size(ws.img)) does not match image size $(size(img))")
+    size(dest) == size(img) || error("Destination size $(size(dest)) does not match image size $(size(img))")
     all(isfinite, img) || throw(ArgumentError(
         "apply_instrument_2d requires finite image values; fill, crop, or inpaint masked pixels before the FFT."))
     all(isfinite, H) || throw(ArgumentError("The Fourier filter H contains non-finite values."))
-    return real.(ifft(fft(img) .* H))
+    _has_point_symmetry(H) || throw(ArgumentError(
+        "The Fourier filter H must satisfy H(k) = H(-k) so that a real image stays real."))
+    ws.img .= img
+    mul!(ws.spec, ws.fwd, ws.img)
+    ws.spec .*= @view H[axes(ws.spec, 1), :]
+    mul!(ws.out, ws.inv, ws.spec)
+    dest .= ws.out
+    return dest
+end
+
+"""
+    apply_instrument_2d(img, H)
+
+Apply a 2D Fourier-domain instrumental transfer function to a real image. `H`
+is given in FFT order (zero frequency at index [1,1]). It can be the binary
+mask of `instrument_bandpass_L` or the smooth transfer function of
+`instrument_bandpass_aperture`.
+
+`H` must satisfy H(k) = H(-k), which holds for any radially symmetric
+filter, including both of the above. The output is then real, so only the
+half-spectrum is computed (`rfft`/`irfft`). An `ArgumentError` is thrown
+otherwise. To filter many images of the same size, use
+`apply_instrument_2d!` with a `FilterWorkspace`.
+"""
+function apply_instrument_2d(img::AbstractMatrix, H::AbstractMatrix)
+    T = float(eltype(img))
+    T <: AbstractFloat || throw(ArgumentError("apply_instrument_2d requires a real image, got eltype $(eltype(img))"))
+    return apply_instrument_2d!(similar(img, T), img, H, FilterWorkspace(T, size(img)...))
 end
 
 """
@@ -52,15 +114,16 @@ function _apply_to_array_xy(data, Hfun, n::Int, m::Int)
         sz = size(data)
         Tout = float(eltype(data))
         out = similar(data, Tout, sz)
+        ws = FilterWorkspace(Tout, n, m)
 
         if sz[1] == n && sz[2] == m
             @views for k in axes(data, 3)
-                out[:, :, k] = apply_instrument_2d(data[:, :, k], Hfun(k))
+                apply_instrument_2d!(out[:, :, k], data[:, :, k], Hfun(k), ws)
             end
             return out
         elseif sz[2] == n && sz[3] == m
             @views for k in axes(data, 1)
-                out[k, :, :] = apply_instrument_2d(data[k, :, :], Hfun(k))
+                apply_instrument_2d!(out[k, :, :], data[k, :, :], Hfun(k), ws)
             end
             return out
         else
