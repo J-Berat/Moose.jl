@@ -1,6 +1,9 @@
 """
     Equations from Padovani et. 2021 (https://doi.org/10.1051/0004-6361/202140799) for the interpolation code 
 """
+using ProgressMeter
+using QuadGK
+using SpecialFunctions
 
 nu_c(E,BField) = PRE_NU_C * BField * (E / ELECTRON_ENERGY_AT_REST_eV)^2
 
@@ -58,16 +61,16 @@ nuArray = [100, 200, 300]
 EmissInterp(BArray, nuArray)
 """
 
-function EmissInterp(BArray::AbstractArray,nuArray::AbstractArray)
-    open("emissivity.dat", "w") do f
-      write(f, "B\tnu\te_para\te_perp\n")    
-      for nui in nuArray   
-        for Bi in BArray
-            @inbounds eps_para = par_emissivity(nui,Bi)
-            @inbounds eps_perp = perp_emissivity(nui,Bi)
-            to_print = "$Bi\t$nui\t$eps_para\t$eps_perp\n"
-            write(f, to_print)
+function EmissInterp(BArray::AbstractArray, nuArray::AbstractArray; fname="emissivity.dat")
+    p = Progress(length(nuArray) * length(BArray); desc="Émissivités : ", showspeed=true)
+    open(fname, "w") do f
+        write(f, "B\tnu\te_para\te_perp\n")
+        for nui in nuArray, Bi in BArray
+            e_para, e_perp = emissivities(nui, Bi)
+            write(f, "$Bi\t$nui\t$e_para\t$e_perp\n")
+            next!(p)
         end
-      end
     end
+    println(" saved in: ", abspath(fname))
+    return abspath(fname)
 end
