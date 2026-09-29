@@ -49,8 +49,6 @@ include(joinpath("PhysicalParameters", "Pressure.jl"))
 include(joinpath("PhysicalParameters", "RM.jl"))
 include(joinpath("PhysicalParameters", "Constants.jl"))
 
-include(joinpath("Frequencies", "FreqFile.jl"))
-
 include(joinpath("Synchrotron", "EmissInterp.jl"))
 include(joinpath("Synchrotron", "Pnu.jl"))
 include(joinpath("Synchrotron", "ProcessSynchrotron.jl"))

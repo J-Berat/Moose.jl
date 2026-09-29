@@ -90,6 +90,8 @@ end
     pixel_length = 2.0
     expected_delta = 0.81 .* ne .* BLOS .* pixel_length
     @test Moose.deltaRM(BLOS, ne, pixel_length) ≈ expected_delta atol = 0 rtol = 1e-12
+    @test Moose.deltaRM(BLOS, ne, 2) ≈ expected_delta atol = 0 rtol = 1e-12
+    @test Moose.deltaRM(BLOS, ne, 2.0f0) ≈ expected_delta atol = 0 rtol = 1e-12
 
     @test Moose.RM([1.0, 2.0, 3.0]) == [1.0, 3.0, 6.0]
 

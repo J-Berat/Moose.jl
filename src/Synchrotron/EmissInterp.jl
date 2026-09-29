@@ -30,13 +30,13 @@ perp_integrand(E,nu,BField) = je_ve_ratio(E) * power_perp(E,nu,BField)
 function par_emissivity(nu_MHz,BField_microG)
     nu = 1e6 * nu_MHz
     BField = 1e-6 * BField_microG
-    return quadgk(x -> par_integrand(x,nu,BField),ELECTRON_ENERGY_AT_REST_eV,1e10)[1]
+    return quadgk(x -> par_integrand(x,nu,BField),ELECTRON_ENERGY_AT_REST_eV,EMAX)[1]
 end
 
 function perp_emissivity(nu_MHz,BField_microG)
     nu = 1e6 * nu_MHz
     BField = 1e-6 * BField_microG
-    return quadgk(x -> perp_integrand(x,nu,BField),ELECTRON_ENERGY_AT_REST_eV,1e10)[1]
+    return quadgk(x -> perp_integrand(x,nu,BField),ELECTRON_ENERGY_AT_REST_eV,EMAX)[1]
 end
 
 # F and G are evaluated once per energy and both emissivities are integrated in a single quadgk

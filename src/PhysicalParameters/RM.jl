@@ -1,12 +1,12 @@
 """
-    deltaRM(BLOS::AbstractArray, ne::AbstractArray, PixelLength_pc::Float64) -> AbstractArray
+    deltaRM(BLOS::AbstractArray, ne::AbstractArray, PixelLength_pc::Real) -> AbstractArray
 
 Calculate the differential rotation measure (delta RM) for a given magnetic field, electron density, and pixel length.
 
 # Arguments
 - `BLOS::AbstractArray`: Array of the magnetic field component along the line of sight (LOS).
 - `ne::AbstractArray`: Array of electron densities.
-- `PixelLength_pc::Float64`: The length of a pixel in parsecs.
+- `PixelLength_pc::Real`: The length of a pixel in parsecs.
 
 # Returns
 - `AbstractArray`: An array representing the differential rotation measure.
@@ -24,19 +24,20 @@ ne = rand(100, 100, 100)  # Example electron density data
 PixelLength_pc = 0.1  # Example pixel length in parsecs
 delta_rm = deltaRM(BLOS, ne, PixelLength_pc)
 println(delta_rm)
+```
 """
-deltaRM(BLOS::AbstractArray, ne::AbstractArray, PixelLength_pc::Float64) = RM_PREFACTOR .* ne .* BLOS .* PixelLength_pc 
+deltaRM(BLOS::AbstractArray, ne::AbstractArray, PixelLength_pc::Real) = RM_PREFACTOR .* ne .* BLOS .* PixelLength_pc
 
 """
-    RM(deltaRM::Array{Float64, 1}) -> Array{Float64, 1}
+    RM(deltaRM::AbstractVector) -> AbstractVector
 
 Calculate the rotation measure (RM) by taking the cumulative sum of the differential rotation measure (delta RM).
 
 # Arguments
-- `deltaRM::Array{Float64, 1}`: A 1D array representing the differential rotation measure.
+- `deltaRM::AbstractVector`: A 1D array representing the differential rotation measure.
 
 # Returns
-- `Array{Float64, 1}`: A 1D array representing the rotation measure.
+- `AbstractVector`: A 1D array representing the rotation measure.
 
 # Description
 This function calculates the rotation measure (RM) by computing the cumulative sum of the differential rotation measure (delta RM). The cumulative sum operation integrates the delta RM values to produce the RM values along the specified axis.
@@ -47,19 +48,20 @@ This function calculates the rotation measure (RM) by computing the cumulative s
 delta_rm = randn(100)  # Example differential rotation measure data
 rm = RM(delta_rm)
 println(rm)
+```
 """
 RM(deltaRM::AbstractVector) = cumsum(deltaRM)
 
 """
-    RM(deltaRM::Array{Float64, 3}) -> Array{Float64, 3}
+    RM(deltaRM::AbstractArray{<:Real, 3}) -> AbstractArray{<:Real, 3}
 
 Calculate the rotation measure (RM) by taking the cumulative sum of the differential rotation measure (delta RM) along the third dimension.
 
 # Arguments
-- `deltaRM::Array{Float64, 3}`: A 3D array representing the differential rotation measure.
+- `deltaRM::AbstractArray{<:Real, 3}`: A 3D array representing the differential rotation measure.
 
 # Returns
-- `Array{Float64, 3}`: A 3D array representing the rotation measure.
+- `AbstractArray{<:Real, 3}`: A 3D array representing the rotation measure.
 
 # Description
 This function calculates the rotation measure (RM) by computing the cumulative sum of the differential rotation measure (delta RM) along the third dimension. The cumulative sum operation integrates the delta RM values along the specified dimension to produce the RM values.
@@ -70,5 +72,6 @@ This function calculates the rotation measure (RM) by computing the cumulative s
 delta_rm = randn(100, 100, 100)  # Example differential rotation measure data
 rm = RM(delta_rm)
 println(rm)
+```
 """
 RM(deltaRM::AbstractArray{<:Real, 3}) = cumsum(deltaRM, dims=3)
