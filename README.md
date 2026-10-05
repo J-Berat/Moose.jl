@@ -90,23 +90,6 @@ them, while RM synthesis, RMSF diagnostics, and RM-CLEAN use only unflagged
 channels. This preserves the exact FITS frequency grid and records the number
 of flagged channels in the `NRFICH` header keyword.
 
-### Optional all-sky example data
-
-The Pluto tutorial can analyze the public Galactic Faraday rotation sky 2020
-map by Hutschenreuter et al. The 24 MB normalized FITS file is intentionally not
-stored in this repository. Download the current `faradaysky2020v2` release from
-the [official MPA data page](https://wwwmpa.mpa-garching.mpg.de/~ensslin/research/data/faraday2020.html)
-and convert it to MOOSE's HEALPix convention with:
-
-```bash
-julia --startup-file=no --project=. scripts/download_faraday2020.jl
-```
-
-The script verifies the upstream SHA-256 checksum, extracts
-`faraday_sky_mean`, and writes `data/faraday2020v2.fits` as an NSIDE 512,
-RING-ordered HEALPix map in Galactic coordinates. The data are distributed by
-their authors under the ODC-By 1.0 license.
-
 ### Resuming after an interruption
 
 For large tiled computations, enable both `tile_size` and `"resume": "safe"`.
