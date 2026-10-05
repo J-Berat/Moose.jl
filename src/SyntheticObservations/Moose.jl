@@ -134,7 +134,7 @@ function print_logo()
            println()
        end
        println(Crayon(foreground = :light_green, bold = true)("Mock Observation Of Synchrotron Emission -- dev. by Jack Berat"))
-       println(Crayon(foreground = :light_red, bold = true)("Version 1.0"))
+       println(Crayon(foreground = :light_red, bold = true)("Version 2.0"))
    end
 end
 
